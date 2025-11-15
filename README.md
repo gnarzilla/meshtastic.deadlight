@@ -414,22 +414,22 @@ Deadlight auto-detects protocols by inspecting initial bytes:
 ## Roadmap
 
 ### v1.1 (Q1 2025)
-- [ ] Adaptive fragmentation (adjust packet size based on mesh conditions)
-- [ ] Intelligent retry with exponential backoff
-- [ ] Pre-fetching for common resources
-- [ ] Android client app (native Deadlight on-device)
+- Adaptive fragmentation (adjust packet size based on mesh conditions)
+- Intelligent retry with exponential backoff
+- Pre-fetching for common resources
+- Android client app (native Deadlight on-device)
 
 ### v1.2 (Q2 2025)
-- [ ] Multi-gateway coordination protocol
-- [ ] Offline message queue (store-and-forward when gateway unreachable)
-- [ ] Bandwidth shaping per client/protocol
-- [ ] WebRTC signaling over mesh (for peer-to-peer voice/video)
+- Multi-gateway coordination protocol
+- Offline message queue (store-and-forward when gateway unreachable)
+- Bandwidth shaping per client/protocol
+- WebRTC signaling over mesh (for peer-to-peer voice/video)
 
 ### v2.0 (Future)
-- [ ] Full IPv6 support
-- [ ] Meshtastic firmware integration (run Deadlight directly on ESP32)
-- [ ] Satellite backhaul optimization (Starlink, Iridium)
-- [ ] Machine learning for mesh route prediction
+- Full IPv6 support
+- Meshtastic firmware integration (run Deadlight directly on ESP32)
+- Satellite backhaul optimization (Starlink, Iridium)
+- Machine learning for mesh route prediction
 
 ## Contributing
 
