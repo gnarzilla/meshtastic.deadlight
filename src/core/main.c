@@ -429,7 +429,7 @@ static void print_banner(void) {
     g_print("\n");
     g_print("======================================================\n");
     g_print("                                                      \n");
-    g_print("              Deadlight Proxy v1.0                   \n");
+    g_print("              Deadlight Meshtastic Proxy v1.0                   \n");
     g_print("                                                      \n");
     g_print("     Modular - Extensible - High Performance         \n");
     g_print("                                                      \n");
@@ -441,7 +441,7 @@ static void print_banner(void) {
  * Print usage information
  */
 static void print_usage(void) {
-    g_print("Deadlight Proxy v1.0 - Modular HTTP/HTTPS Proxy\n\n");
+    g_print("Deadlight Meshtastic Proxy v1.0 - Modular HTTP/HTTPS Proxy\n\n");
     g_print("Usage: deadlight [OPTIONS]\n\n");
     g_print("Options:\n");
     g_print("  -d, --daemon           Run as daemon\n");
