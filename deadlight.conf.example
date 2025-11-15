@@ -1,0 +1,47 @@
+[core]
+port = 8080
+bind_address = 0.0.0.0
+max_connections = 500
+log_level = info
+worker_threads = 4
+
+[ssl]
+enabled = true
+ca_key_file = /home/thatch/.deadlight/ca/ca.key
+cert_cache_dir = /tmp/deadlight_certs
+
+[protocols]
+http_enabled = true
+https_enabled = true
+connect_enabled = true
+
+[plugins]
+enabled = false
+
+[imap]
+# The upstream IMAP server to proxy connections to.
+upstream_host = imap.gmail.com
+upstream_port = 143
+
+[imaps]
+# The upstream IMAPS server to proxy connections to.
+# This uses SSL/TLS on port 993.
+upstream_host = imap.gmail.com
+upstream_port = 993
+
+[smtp]
+enabled = true
+bridge_mode = true
+api_endpoint = https://deadlight.boo/api/email/receive
+upstream_host = 
+upstream_port = 25
+
+[api] 
+enabled = true
+blog_endpoint = https://deadlight.boo/api
+auth_token_file = /home/thatch/.deadlight/blog_token
+
+[federation]
+enabled = true
+domain = deadlight.boo
+email_address = blog@deadlight.boo

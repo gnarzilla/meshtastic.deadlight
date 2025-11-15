@@ -1,0 +1,178 @@
+
+Deadlight Proxy v4.0 - Architecture Design
+Core Philosophy
+
+Modular: Each component can be tested/run standalone
+Extensible: Plugin architecture for easy feature addition
+Robust: Proper error handling and resource management
+GNU-first: Leverage GLib, GIO, and other GNU tools
+C-pure: No C++, clean C with modern practices
+
+Module Structure
+1. Core Framework (src/core/)
+src/core/
+├── deadlight.h           # Main header with all public APIs
+├── main.c               # Entry point and CLI handling
+├── event_loop.c         # Main event loop (GMainLoop based)
+├── config.c             # Configuration management (GKeyFile)
+├── logging.c            # Logging system (GLib logging)
+└── utils.c              # Common utilities
+2. Network Layer (src/network/)
+src/network/
+├── listener.c           # Connection acceptance
+├── connection.c         # Connection state management
+├── protocol_detect.c    # Protocol detection engine
+├── dns_resolver.c       # DNS resolution (GResolver)
+└── bandwidth.c          # Traffic shaping/monitoring
+3. Protocol Handlers (src/protocols/)
+src/protocols/
+├── http_handler.c       # HTTP/1.1 and HTTP/2 support
+├── https_handler.c      # HTTPS with SSL interception
+├── socks_handler.c      # SOCKS4/5 support
+├── tunnel_handler.c     # Raw tunneling
+└── websocket_handler.c  # WebSocket support
+4. SSL Engine (src/ssl/)
+src/ssl/
+├── ssl_engine.c         # SSL context management
+├── cert_manager.c       # Certificate generation/caching
+├── ca_manager.c         # CA operations
+└── ssl_intercept.c      # MITM interception logic
+5. Plugin System (src/plugins/)
+src/plugins/
+├── plugin_manager.c     # Plugin lifecycle management
+├── plugin_api.c         # Plugin API implementation
+├── builtin/             # Built-in plugins
+│   ├── adblocker.c      # Pi-hole style ad blocking
+│   ├── logger.c         # Traffic logging
+│   ├── auth.c           # Authentication
+│   └── stats.c          # Statistics collection
+└── external/            # External plugin loader
+6. Data Structures (src/data/)
+src/data/
+├── connection_pool.c    # Connection pooling
+├── cache.c             # Response caching
+├── blocklist.c         # Ad/malware blocking lists
+└── ruleset.c           # Rule engine for filtering
+
+Key Design Decisions
+1. GNU/GLib Integration
+GMainLoop: Event loop instead of libevent
+GIOChannel: For socket operations
+GKeyFile: Configuration files
+GHashTable: Fast lookups for caching/routing
+GThreadPool: For CPU-intensive operations
+GResolver: DNS resolution
+GTimer: Performance monitoring
+2. Configuration System
+ini
+# deadlight.conf
+[core]
+port = 8080
+max_connections = 500
+log_level = info
+plugin_dir = /usr/local/lib/deadlight/plugins
+
+[ssl]
+ca_cert = deadlight-ca.crt
+ca_key = deadlight-ca.key
+cert_cache_size = 1000
+
+[plugins]
+adblocker = enabled
+logger = enabled
+stats = enabled
+
+[adblocker]
+blocklist_urls = https://someonewhocares.org/hosts/zero/hosts
+update_interval = 86400
+3. Plugin API
+c
+typedef struct {
+    const char *name;
+    const char *version;
+    int (*init)(DeadlightContext *ctx);
+    int (*process_request)(DeadlightRequest *req);
+    int (*process_response)(DeadlightResponse *resp);
+    void (*cleanup)(void);
+} DeadlightPlugin;
+4. Testing Strategy
+Each module can be compiled as a standalone executable:
+
+bash
+# Test protocol detection
+./deadlight-test protocol-detect --input sample.pcap
+
+# Test SSL interception
+./deadlight-test ssl-intercept --host example.com
+
+# Test plugin system
+./deadlight-test plugin --name adblocker --url malware.com
+
+# Test configuration
+./deadlight-test config --file deadlight.conf
+Advanced Features (Future)
+1. ML Integration Point
+c
+// In plugin API - ready for ML integration
+typedef struct {
+    uint8_t *packet_data;
+    size_t packet_len;
+    ConnectionMetadata *metadata;
+    float confidence_score;  // For ML predictions
+} AnalysisContext;
+2. System Integration
+Keyring: libsecret for credential storage
+DBus: For desktop integration
+SystemD: Service management
+Firewall: iptables/netfilter integration
+3. Performance Features
+Connection pooling
+Response caching
+Bandwidth limiting
+Load balancing
+Build System
+makefile
+# Makefile with modular compilation
+MODULES = core network protocols ssl plugins data
+CFLAGS = `pkg-config --cflags glib-2.0 gio-2.0 openssl`
+LDFLAGS = `pkg-config --libs glib-2.0 gio-2.0 openssl`
+
+# Each module can be built independently
+core: $(CORE_OBJS)
+network: $(NETWORK_OBJS)
+protocols: $(PROTOCOL_OBJS)
+# ... etc
+CLI Interface
+bash
+# Main proxy
+deadlight --config /etc/deadlight.conf
+
+# Configuration management
+deadlight-config --set core.port 8080
+deadlight-config --enable-plugin adblocker
+
+# Certificate management
+deadlight-ca --create
+deadlight-ca --install-system
+
+# Plugin management
+deadlight-plugin --list
+deadlight-plugin --install custom-filter.so
+
+# Testing utilities
+deadlight-test --module all
+deadlight-test --benchmark
+Error Handling Strategy
+Graceful degradation: Core functionality continues if plugins fail
+Detailed logging: Structured logging with context
+Resource cleanup: RAII-style cleanup patterns
+Signal handling: Proper shutdown on SIGINT/SIGTERM
+This architecture gives us:
+
+✅ Modularity (each component testable)
+✅ Extensibility (plugin system)
+✅ GNU ecosystem integration
+✅ Future ML readiness
+✅ System integration points
+✅ Performance scalability
+
