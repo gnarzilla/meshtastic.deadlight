@@ -68,9 +68,9 @@ Deadlight solves this by sitting in the middle:
 
 1. **Clone and build**:
    ```bash
-   git clone https://github.com/gnarzilla/deadlight-meshtastic.git
-   cd deadlight-meshtastic
-   make ENABLE_MESHTASTIC=1
+   git clone https://github.com/gnarzilla/meshtastic.deadlight.git
+   cd meshtastic.deadlight
+   make clean && make UI=1
    ```
 
 2. **Install CA certificate** (for HTTPS interception):
@@ -95,7 +95,7 @@ Deadlight solves this by sitting in the middle:
 
 4. **Run the proxy**:
    ```bash
-   ./bin/deadlight -c meshtastic.conf
+   sudo ./bin/deadlight -c meshtastic.conf
    ```
 
 5. **Configure mesh clients** to use the gateway's mesh address as their proxy (see [Usage](#usage)).
