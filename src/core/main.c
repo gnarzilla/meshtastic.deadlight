@@ -1,8 +1,8 @@
 /**
- * Deadlight Proxy v1.0 - Main Entry Point
+ * Deadlight Meshtastic Proxy v1.0 - Main Entry Point
  *
- * A modular, extensible HTTP/HTTPS proxy with SSL interception
- * Built with GNU/GLib ecosystem for robustness and performance
+ * Internet gateway for LoRa mesh networks
+ * Built with GNU/GLib ecosystem
  */
 
 #include <stdio.h>
@@ -335,7 +335,7 @@ static int run_interactive_mode(void) {
 
     // Print configuration info
     if (!opt_daemon) {
-        g_print("\nDeadlight Proxy is ready!\n");
+        g_print("\nDeadlight Meshtastic Proxy is ready!\n");
         g_print("Listening on port %d\n", port);
         g_print("Configuration file: %s\n",
                 opt_config_file ? opt_config_file : "default");
