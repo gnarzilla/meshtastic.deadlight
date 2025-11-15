@@ -29,7 +29,7 @@ Deadlight solves this by sitting in the middle:
 2. Internet side: Speaks every protocol your applications already use
 3. Bridges transparently: Fragments outgoing requests, reassembles incoming responses
 
-**Result**: Your mesh network suddenly works with everything—email clients, web browsers, update tools, API services—without modifying a single line of application code.
+**Result**: Your mesh network suddenly works with everything, email clients, web browsers, update tools, API services, all without modifying a single line of application code.
 
 ### Critical Scenarios This Enables
 
