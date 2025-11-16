@@ -429,9 +429,9 @@ static void print_banner(void) {
     g_print("\n");
     g_print("======================================================\n");
     g_print("                                                      \n");
-    g_print("              Deadlight Meshtastic Proxy v1.0                   \n");
+    g_print("     Deadlight Meshtastic Proxy v1.0                  \n");
     g_print("                                                      \n");
-    g_print("     Modular - Extensible - High Performance         \n");
+    g_print("     Modular - Extensible - High Performance          \n");
     g_print("                                                      \n");
     g_print("======================================================\n");
     g_print("\n");
