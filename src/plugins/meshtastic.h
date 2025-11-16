@@ -14,11 +14,10 @@
 #include <glib.h>
 #include <gio/gio.h>
 
-// Nanopb includes (after generation)
+// Nanopb includes
 #include "pb.h"
 #include "pb_encode.h"
 #include "pb_decode.h"
-#include "meshtastic.pb.h"  // Generated from Meshtastic protobufs
 
 typedef struct {
     GIOChannel *serial_channel;  // Serial connection to Meshtastic node

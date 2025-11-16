@@ -121,9 +121,10 @@ $(PLUGIN_BINDIR)/adblocker.so: $(PLUGINDIR)/adblocker.c $(PLUGINDIR)/adblocker.h
 $(PLUGIN_BINDIR)/ratelimiter.so: $(PLUGINDIR)/ratelimiter.c $(PLUGINDIR)/ratelimiter.h | $(PLUGIN_BINDIR)
 	@echo "Building RateLimiter plugin..."
 	@$(CC) $(CFLAGS) $(GLIB_CFLAGS) -DDEADLIGHT_VERSION=\"$(VERSION)\" -Isrc -Isrc/core -fPIC -shared -o $@ $< $(ALL_LIBS)
-# ───────────────────────────────────────────────────────
-# Meshtastic Plugin + Nanopb – FINAL NON-RECURSIVE
-# ───────────────────────────────────────────────────────
+
+# ───────────────────────────────────────────────────────────
+# Meshtastic Plugin + Nanopb — FIXED PATHS
+# ───────────────────────────────────────────────────────────
 
 # ------------------------------------------------------------------
 # Paths
@@ -142,36 +143,37 @@ NANOPB_SOURCES  = $(NANOPB_DIR)/pb_common.c \
                   $(NANOPB_DIR)/pb_decode.c
 
 # ------------------------------------------------------------------
-# Include flags
+# Include flags - ADD the nested meshtastic dir
 # ------------------------------------------------------------------
 NANOPB_CFLAGS   = -I$(NANOPB_INC) \
                   -I$(GEN_DIR) \
+                  -I$(GEN_DIR)/meshtastic \
                   -Isrc \
-                  -Isrc/core
+                  -Isrc/core \
+                  -Wno-pedantic
 
 # ------------------------------------------------------------------
-# Proto files we need
+# Proto files we need - generate ALL proto files except deviceonly.proto
+# (deviceonly.proto has C++ dependencies that break pure C compilation)
 # ------------------------------------------------------------------
-PROTO_FILES = $(PROTO_DIR)/mesh.proto \
-              $(PROTO_DIR)/channel.proto \
-              $(PROTO_DIR)/portnums.proto
+PROTO_FILES = $(filter-out $(PROTO_DIR)/deviceonly.proto,$(wildcard $(PROTO_DIR)/*.proto))
 
 # ------------------------------------------------------------------
-# Generated files
+# Generated files - UPDATE paths to include nested meshtastic/
 # ------------------------------------------------------------------
-MESHTASTIC_PB_C = $(patsubst $(PROTO_DIR)/%.proto,$(GEN_DIR)/%.pb.c,$(PROTO_FILES))
-MESHTASTIC_PB_H = $(patsubst $(PROTO_DIR)/%.proto,$(GEN_DIR)/%.pb.h,$(PROTO_FILES))
+MESHTASTIC_PB_C = $(patsubst $(PROTO_DIR)/%.proto,$(GEN_DIR)/meshtastic/%.pb.c,$(PROTO_FILES))
+MESHTASTIC_PB_H = $(patsubst $(PROTO_DIR)/%.proto,$(GEN_DIR)/meshtastic/%.pb.h,$(PROTO_FILES))
 
 # ------------------------------------------------------------------
-# Create output dir
+# Create output dirs
 # ------------------------------------------------------------------
-$(GEN_DIR):
-	@mkdir -p $@
+$(GEN_DIR) $(GEN_DIR)/meshtastic:
+	@mkdir -p $(GEN_DIR)/meshtastic
 
 # ------------------------------------------------------------------
-# Pattern rule: .proto → .pb.c + .pb.h in GEN_DIR
+# Pattern rule: .proto → .pb.c + .pb.h in GEN_DIR/meshtastic
 # ------------------------------------------------------------------
-$(GEN_DIR)/%.pb.c $(GEN_DIR)/%.pb.h: $(PROTO_DIR)/%.proto | $(GEN_DIR)
+$(GEN_DIR)/meshtastic/%.pb.c $(GEN_DIR)/meshtastic/%.pb.h: $(PROTO_DIR)/%.proto | $(GEN_DIR)/meshtastic
 	@echo "Generating nanopb files from $< ..."
 	@python3 $(NANOPB_DIR)/generator/nanopb_generator.py \
 		-I $(PROTO_BASE_DIR) \

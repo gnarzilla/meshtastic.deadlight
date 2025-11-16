@@ -4,7 +4,7 @@ port=8080
 #IP address to bind to
 bind_address=0.0.0.0
 #Maximum concurrent connections
-max_connections=5000
+max_connections=500
 #Connection timeout in seconds
 connection_timeout=30
 #Buffer size for data transfer
@@ -13,17 +13,16 @@ buffer_size=65536
 log_level=info
 #Log file path (empty for stdout)
 log_file=
-# /home/thatch/.deadlight/LOGFILE.txt
 #Number of worker threads
-worker_threads=8
+worker_threads=4
 
 [ssl]
 #Enable SSL interception
 enabled=true
 #CA certificate file
-ca_cert_file=/home/thatch/.deadlight/ca.crt
+ca_cert_file=~/.deadlight/ca/ca.crt
 #CA private key file
-ca_key_file=/home/thatch/.deadlight/ca.key
+ca_key_file=~/.deadlight/ca/ca.key
 #Certificate cache directory
 cert_cache_dir=/tmp/deadlight_certs
 #Maximum cached certificates
@@ -71,7 +70,7 @@ tcp_nodelay=true
 #Enable TCP keepalive
 tcp_keepalive=true
 #Max connections per upstream host
-connection_pool_size=25
+connection_pool_size=10
 #Idle connection timeout (seconds)
 connection_pool_timeout=300
 #Total pool size across all hosts
@@ -87,7 +86,7 @@ connection_pool_reuse_ssl=true
 #Enable plugin system
 enabled=true
 #Plugin directory
-plugin_dir=./bin/plugins
+plugin_dir=/usr/lib/deadlight/plugins
 #Auto-load plugins
 autoload=adblocker,logger,stats
 #Enable built-in plugins
@@ -145,12 +144,6 @@ auth_realm=Deadlight Proxy
 #Require authentication for all requests
 require_auth=false
 
-[plugin.meshtastic]
-enabled = true
-serial_device = /dev/ttyUSB0        # or whatever your node shows
-channel = LongFast
-custom_port = 257                   # safe private port
-
 [cache]
 #Enable response caching
 enabled=true
@@ -178,22 +171,3 @@ blocked_domains=
 max_request_size=10MB
 #Maximum header size
 max_header_size=8KB
-
-[vpn]
-# Enable VPN gateway (requires root privileges)
-enabled=true
-device = tun0
-tun_device=tun0
-address = 10.8.0.1
-netmask = 255.255.255.0
-upstream_interface = 172.29.16.1 dev eth0 src 172.29.16.185 uid 1000
-gateway_ip=10.8.0.1
-client_subnet=10.8.0.0/24
-# TUN device configuration
-device = tun0
-address = 10.8.0.1
-netmask = 255.255.255.0
-# Client IP range
-client_network = 10.8.0.0/24
-# DNS servers to provide to clients (optional)
-dns_servers = 8.8.8.8,8.8.4.4

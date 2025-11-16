@@ -10,7 +10,6 @@
 #include "pb.h"
 #include "pb_encode.h"
 #include "pb_decode.h"
-#include "meshtastic.pb.h"  // Assumes generated: meshtastic_MeshPacket, meshtastic_Data, etc.
 
 // Max chunk size (Meshtastic payload limit)
 #define MAX_CHUNK_SIZE 220
@@ -23,13 +22,20 @@ static gboolean send_chunk(MeshtasticData *data, DeadlightConnection *conn, cons
 static gpointer reader_thread_func(gpointer user_data);
 static gboolean reassemble_and_inject(MeshtasticData *data, DeadlightConnection *conn, meshtastic_MeshPacket *packet);
 
+// Helper to free GByteArray
+static void free_byte_array(gpointer data) {
+    if (data) {
+        g_byte_array_free((GByteArray *)data, TRUE);
+    }
+}
+
 // Init: Load config, open serial, start reader
 static gboolean meshtastic_init(DeadlightContext *context) {
     g_info("Initializing MeshtasticTunnel plugin...");
 
     MeshtasticData *data = g_new0(MeshtasticData, 1);
     g_mutex_init(&data->mutex);
-    data->reassembly = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)g_byte_array_free);
+    data->reassembly = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, free_byte_array);
     data->enabled = deadlight_config_get_bool(context, "plugin.meshtastic", "enabled", TRUE);
     data->serial_device = deadlight_config_get_string(context, "plugin.meshtastic", "serial_device", "/dev/ttyUSB0");
     data->channel_name = deadlight_config_get_string(context, "plugin.meshtastic", "channel", "LongFast");
@@ -106,7 +112,7 @@ static gboolean on_request_body(DeadlightRequest *request) {
 }
 
 // Similar for responses (if tunneling back)
-static gboolean on_response_body(DeadlightResponse *response) {
+static gboolean on_response_body(DeadlightResponse *response G_GNUC_UNUSED) {
     // Symmetric to on_request_body; implement if needed for bidirectional
     return TRUE;
 }
@@ -119,34 +125,35 @@ static gboolean send_chunk(MeshtasticData *data, DeadlightConnection *conn, cons
 
     // Encode chunk to bytes (use nanopb for your custom PB if defined; here simple memcpy for demo)
     uint8_t chunk_buf[sizeof(MeshtasticChunk)];
-    // pb_encode... (add actual encoding if using PB for chunk)
+    memcpy(chunk_buf, &chunk, sizeof(chunk));
 
     // Wrap in Meshtastic Data
-    meshtastic_Data pb_data = meshtastic_Data_init_zero;
-    pb_data.portnum = data->custom_port;
+    meshtastic_Data pb_data = meshtastic_Data_init_default;
+    pb_data.portnum = (meshtastic_PortNum)data->custom_port;
     pb_data.payload.size = sizeof(chunk_buf);
     memcpy(pb_data.payload.bytes, chunk_buf, sizeof(chunk_buf));
 
     // Wrap in MeshPacket
-    meshtastic_MeshPacket packet = meshtastic_MeshPacket_init_zero;
-    packet.decoded = pb_data;  // Assuming decoded variant
+    meshtastic_MeshPacket packet = meshtastic_MeshPacket_init_default;
+    packet.decoded = pb_data;
     // Set channel, from/to, etc. (use defaults or config)
+    packet.channel = 0; // Default channel
 
     // Encode packet
-    uint8_t packet_buf[meshtastic_MeshPacket_size];
+    uint8_t packet_buf[512];
     pb_ostream_t ostream = pb_ostream_from_buffer(packet_buf, sizeof(packet_buf));
     if (!pb_encode(&ostream, meshtastic_MeshPacket_fields, &packet)) {
         g_warning("Meshtastic encode failed");
         return FALSE;
     }
 
-    // Wrap in ToRadio
-    meshtastic_ToRadio to_radio = meshtastic_ToRadio_init_zero;
-    to_radio.which_variant = meshtastic_ToRadio_packet_tag;
-    to_radio.variant.packet = packet;
+    // Wrap in ToRadio - the union is anonymous, access members directly
+    meshtastic_ToRadio to_radio = meshtastic_ToRadio_init_default;
+    to_radio.which_payload_variant = meshtastic_ToRadio_packet_tag;
+    to_radio.packet = packet;
 
     // Encode ToRadio
-    uint8_t to_buf[meshtastic_ToRadio_size];
+    uint8_t to_buf[512];
     pb_ostream_t to_ostream = pb_ostream_from_buffer(to_buf, sizeof(to_buf));
     if (!pb_encode(&to_ostream, meshtastic_ToRadio_fields, &to_radio)) {
         g_warning("ToRadio encode failed");
@@ -190,12 +197,13 @@ static gpointer reader_thread_func(gpointer user_data) {
 
         if (read_len > 0) {
             // Decode FromRadio
-            meshtastic_FromRadio from_radio = meshtastic_FromRadio_init_zero;
+            meshtastic_FromRadio from_radio = meshtastic_FromRadio_init_default;
             pb_istream_t istream = pb_istream_from_buffer(buf, read_len);
             if (pb_decode(&istream, meshtastic_FromRadio_fields, &from_radio)) {
-                if (from_radio.which_variant == meshtastic_FromRadio_packet_tag) {
-                    meshtastic_MeshPacket *packet = &from_radio.variant.packet;
-                    if (packet->decoded.portnum == data->custom_port) {
+                // Check which union variant is set - the union is anonymous
+                if (from_radio.which_payload_variant == meshtastic_FromRadio_packet_tag) {
+                    meshtastic_MeshPacket *packet = &from_radio.packet;
+                    if (packet->decoded.portnum == (meshtastic_PortNum)data->custom_port) {
                         // Find conn (assume conn_id in packet or broadcast; here dummy)
                         DeadlightConnection *conn = NULL;  // Lookup or create new conn
                         reassemble_and_inject(data, conn, packet);
@@ -210,10 +218,13 @@ static gpointer reader_thread_func(gpointer user_data) {
 }
 
 // Reassemble chunks and inject as response
-static gboolean reassemble_and_inject(MeshtasticData *data, DeadlightConnection *conn, meshtastic_MeshPacket *packet) {
+static gboolean reassemble_and_inject(MeshtasticData *data, DeadlightConnection *conn, meshtastic_MeshPacket *packet G_GNUC_UNUSED) {
+    if (!conn) return FALSE;  // Need valid connection
+    
     // Extract chunk from payload
     MeshtasticChunk chunk;
     // pb_decode packet->decoded.payload into chunk (add actual)
+    memcpy(&chunk, packet->decoded.payload.bytes, sizeof(chunk));
 
     gchar *conn_key = g_strdup_printf("%lu", conn->id);
     GByteArray *assembly = g_hash_table_lookup(data->reassembly, conn_key);
@@ -225,11 +236,14 @@ static gboolean reassemble_and_inject(MeshtasticData *data, DeadlightConnection 
     }
 
     // Append chunk (at seq position if out-of-order)
-    g_byte_array_set_size(assembly, assembly->len + chunk.payload_len);
+    size_t target_size = (chunk.seq_num + 1) * MAX_CHUNK_SIZE;
+    if (assembly->len < target_size) {
+        g_byte_array_set_size(assembly, target_size);
+    }
     memcpy(assembly->data + (chunk.seq_num * MAX_CHUNK_SIZE), chunk.payload, chunk.payload_len);
 
     // Check complete
-    if (assembly->len == (chunk.total_chunks * MAX_CHUNK_SIZE)) {
+    if (assembly->len >= (chunk.total_chunks * MAX_CHUNK_SIZE)) {
         // Inject into response
         if (conn->current_response) {
             g_byte_array_append(conn->current_response->body, assembly->data, assembly->len);
@@ -246,7 +260,7 @@ static DeadlightPlugin meshtastic_plugin = {
     .name = "MeshtasticTunnel",
     .version = "1.0.0",
     .description = "Tunnels data over Meshtastic mesh via chunking",
-    .author = "Deadlight Team (with Grok assist)",
+    .author = "Deadlight Team",
     .init = meshtastic_init,
     .cleanup = meshtastic_cleanup,
     .on_request_headers = NULL,
