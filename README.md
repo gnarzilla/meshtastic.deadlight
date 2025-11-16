@@ -4,7 +4,7 @@
 
 [Overview](#overview) · [Why This Exists](#why-this-exists) · [Getting Started](#getting-started) · [Hardware](#hardware) · [Usage](#usage) · [Configuration](#configuration) · [How It Works](#how-it-works) · [Real-World Use Cases](#real-world-use-cases) · [Performance](#performance) · [Roadmap](#roadmap)
 
-![Deadlight Meshtastic Bridge Architecture](assets/meshtastic_bridge_diagram.png)
+![Deadlight Meshtastic Proxy (no lora)](assets/output.gif)
 
 ## Overview
 
