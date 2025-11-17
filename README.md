@@ -413,13 +413,13 @@ Deadlight auto-detects protocols by inspecting initial bytes:
 
 ## Roadmap
 
-### v1.1 (Q1 2025)
+### v1.1 (Q1 2026)
 - Adaptive fragmentation (adjust packet size based on mesh conditions)
 - Intelligent retry with exponential backoff
 - Pre-fetching for common resources
 - Android client app (native Deadlight on-device)
 
-### v1.2 (Q2 2025)
+### v1.2 (Q2 2026)
 - Multi-gateway coordination protocol
 - Offline message queue (store-and-forward when gateway unreachable)
 - Bandwidth shaping per client/protocol
