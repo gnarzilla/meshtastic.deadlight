@@ -1478,7 +1478,7 @@ static gboolean on_udp_upstream_readable(GIOChannel *source, GIOCondition condit
         return G_SOURCE_CONTINUE;
     }
     
-    guint8 buffer[2048];
+    guint8 buffer[65535];
     GError *error = NULL;
     gssize bytes = g_socket_receive(session->upstream_socket, (gchar *)buffer,
                                    sizeof(buffer), NULL, &error);
