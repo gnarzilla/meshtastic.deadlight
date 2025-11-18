@@ -2,7 +2,7 @@
 
 **Internet-over-LoRa: A practical bridge between Meshtastic mesh networks and the Internet**
 
-[Overview](#overview) · [Why This Exists](#why-this-exists) · [Getting Started](#getting-started) · [Hardware](#hardware) · [Usage](#usage) · [Configuration](#configuration) · [How It Works](#how-it-works) · [Real-World Use Cases](#real-world-use-cases) · [Performance](#performance) · [Roadmap](#roadmap)
+[Why This Exists](#why-this-exists) · [Getting Started](#getting-started) · [Hardware](#hardware) · [Usage](#usage) · [Configuration](#configuration) · [How It Works](#how-it-works) · [Real-World Use Cases](#real-world-use-cases) · [Performance](#performance) · [Roadmap](#roadmap)
 
 ![Deadlight Meshtastic Proxy (no lora)](assets/output.gif)
 
@@ -266,10 +266,10 @@ load_balance = true      # Distribute across gateways
 ```
 ┌─────────────┐                  ┌──────────────┐                ┌──────────┐
 │ Mesh Client │                  │   Deadlight  │                │ Internet │
-│   (Phone)   │  LoRa Packets    │   Gateway    │   TCP/IP       │ Services │
+│   (Phone)   │  LoRa Packets    │   Gateway    │   TCP/   |   IP        │ Services │
 │             ├─────────────────>│              ├───────────────>│          │
-│ Meshtastic  │  (868/915 MHz)   │ - Fragment   │                │  HTTP    │
-│     App     │                  │ - Reassemble │                │  SMTP    │
+│ Meshtastic  │  (868/915 MHz)   │ - Fragment   │                │  HTTP       │
+│     App     │                  │ - Reassemble │                │  SMTP       │
 │             │<─────────────────┤ - TLS Proxy  │<───────────────┤  IMAP    │
 └─────────────┘                  └──────────────┘                └──────────┘
                                          │
@@ -413,13 +413,13 @@ Deadlight auto-detects protocols by inspecting initial bytes:
 
 ## Roadmap
 
-### v1.1 (Q1 2025)
+### v1.1 (Q1 2026)
 - Adaptive fragmentation (adjust packet size based on mesh conditions)
 - Intelligent retry with exponential backoff
 - Pre-fetching for common resources
 - Android client app (native Deadlight on-device)
 
-### v1.2 (Q2 2025)
+### v1.2 (Q2 2026)
 - Multi-gateway coordination protocol
 - Offline message queue (store-and-forward when gateway unreachable)
 - Bandwidth shaping per client/protocol
