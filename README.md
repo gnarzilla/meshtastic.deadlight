@@ -266,10 +266,10 @@ load_balance = true      # Distribute across gateways
 ```
 ┌─────────────┐                  ┌──────────────┐                ┌──────────┐
 │ Mesh Client │                  │   Deadlight  │                │ Internet │
-│   (Phone)   │  LoRa Packets    │   Gateway    │   TCP/IP       │ Services │
+│   (Phone)   │  LoRa Packets    │   Gateway    │   TCP/   |   IP        │ Services │
 │             ├─────────────────>│              ├───────────────>│          │
-│ Meshtastic  │  (868/915 MHz)   │ - Fragment   │                │  HTTP    │
-│     App     │                  │ - Reassemble │                │  SMTP    │
+│ Meshtastic  │  (868/915 MHz)   │ - Fragment   │                │  HTTP       │
+│     App     │                  │ - Reassemble │                │  SMTP       │
 │             │<─────────────────┤ - TLS Proxy  │<───────────────┤  IMAP    │
 └─────────────┘                  └──────────────┘                └──────────┘
                                          │
