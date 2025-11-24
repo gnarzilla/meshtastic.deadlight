@@ -2,9 +2,10 @@
 
 **Internet-over-LoRa: A practical bridge between Meshtastic mesh networks and the Internet**
 
+[![Meshtastic](https://meshtastic.deadlight.boo/favicon.ico)](https://meshtastic.deadlight.boo) [Project/Community Blog - Meshtastic.Deadlight.boo](https://meshtastic.deadlight.boo) · [Why This Exists](#why-this-exists) · [Getting Started](#getting-started) · [Hardware](#hardware) · [Usage](#usage) · [Configuration](#configuration) · [How It Works](#how-it-works) · [Real-World Use Cases](#real-world-use-cases) · [Performance](#performance) · [Roadmap](#roadmap) · [Project Blog](https://meshtastic.deadlight.boo)
 
+![Deadlight Meshtastic Proxy (no lora)](assets/output.gif)
 
-[Why This Exists](#why-this-exists) · [Getting Started](#getting-started) · [Hardware](#hardware) · [Usage](#usage) · [Configuration](#configuration) · [How It Works](#how-it-works) · [Real-World Use Cases](#real-world-use-cases) · [Performance](#performance) · [Roadmap](#roadmap) · [Project Blog](https://meshtastic.deadlight.boo) · [![Meshtastic](https://meshtastic.deadlight.boo/favicon.ico)](https://meshtastic.deadlight.boo) [Project/Community Blog - Meshtastic.Deadlight.boo](https://meshtastic.deadlight.boo)
 
 ## Overview
 
@@ -49,8 +50,6 @@ Deadlight solves this by sitting in the middle:
 - **Plugin Extensibility**: Add custom filters, caching, compression, or protocol handlers
 - **Hardware Flexibility**: Works with USB serial, Bluetooth, or TCP-connected radios
 - **Zero-Config Detection**: Auto-discovers Meshtastic devices on serial ports
-
-![Deadlight Meshtastic Proxy (no lora)](assets/output.gif)
 
 ## Getting Started
 
