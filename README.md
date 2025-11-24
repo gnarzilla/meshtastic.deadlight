@@ -2,7 +2,7 @@
 
 **Internet-over-LoRa: A practical bridge between Meshtastic mesh networks and the Internet**
 
-[![Meshtastic](https://meshtastic.deadlight.boo/favicon.ico)](https://meshtastic.deadlight.boo) [Project/Community Blog -meshtastic.deadlight.boo](https://meshtastic.deadlight.boo)
+[![Meshtastic](https://meshtastic.deadlight.boo/favicon.ico)](https://meshtastic.deadlight.boo) [Project/Community Blog - Meshtastic.Deadlight.boo](https://meshtastic.deadlight.boo)
 
 [Why This Exists](#why-this-exists) · [Getting Started](#getting-started) · [Hardware](#hardware) · [Usage](#usage) · [Configuration](#configuration) · [How It Works](#how-it-works) · [Real-World Use Cases](#real-world-use-cases) · [Performance](#performance) · [Roadmap](#roadmap) · [Project Blog](https://meshtastic.deadlight.boo)
 
