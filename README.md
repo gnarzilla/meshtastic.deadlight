@@ -6,8 +6,6 @@
 
 [Why This Exists](#why-this-exists) · [Getting Started](#getting-started) · [Hardware](#hardware) · [Usage](#usage) · [Configuration](#configuration) · [How It Works](#how-it-works) · [Real-World Use Cases](#real-world-use-cases) · [Performance](#performance) · [Roadmap](#roadmap) · [Project Blog](https://meshtastic.deadlight.boo)
 
-![Deadlight Meshtastic Proxy (no lora)](assets/output.gif)
-
 ## Overview
 
 Deadlight Meshtastic Proxy transforms LoRa mesh networks into practical Internet gateways. Built on the [Deadlight Proxy](https://github.com/gnarzilla/proxy.deadlight) foundation, it adds transparent mesh networking capabilities that let any device on a Meshtastic mesh access standard Internet protocols—HTTP/HTTPS, email, DNS, and more—as if they had normal connectivity.
@@ -51,6 +49,8 @@ Deadlight solves this by sitting in the middle:
 - **Plugin Extensibility**: Add custom filters, caching, compression, or protocol handlers
 - **Hardware Flexibility**: Works with USB serial, Bluetooth, or TCP-connected radios
 - **Zero-Config Detection**: Auto-discovers Meshtastic devices on serial ports
+
+![Deadlight Meshtastic Proxy (no lora)](assets/output.gif)
 
 ## Getting Started
 
