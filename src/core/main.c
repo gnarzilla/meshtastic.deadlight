@@ -316,7 +316,9 @@ static int run_interactive_mode(void) {
     }
 #ifdef ENABLE_UI
     g_info("Starting UI server...");
-    start_ui_server(g_context);
+    if (!start_ui_server(g_context)) {
+        g_warning("UI server failed to start; continuing without UI");
+    }
 #endif
 
     // Set up signal handlers

@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include <microhttpd.h>
 #include "core/plugins.h"
 
@@ -129,7 +130,7 @@ request_handler(void *cls,
 /* ---------- Server lifecycle ---------- */
 static struct MHD_Daemon *ui_daemon = NULL;
 
-void start_ui_server(DeadlightContext *context)
+gboolean start_ui_server(DeadlightContext *context)
 {
     const unsigned short ui_port = 8081;
 
@@ -141,10 +142,12 @@ void start_ui_server(DeadlightContext *context)
                                  context, 
                                  MHD_OPTION_END);
     if (!ui_daemon) {
-        g_error("Failed to start UI daemon on port %u", ui_port);
-    } else {
-        g_info("UI server listening on http://127.0.0.1:%u", ui_port);
+        g_warning("Failed to start UI daemon on port %u: %s", ui_port, g_strerror(errno));
+        return FALSE;
     }
+
+    g_info("UI server listening on http://127.0.0.1:%u", ui_port);
+    return TRUE;
 }
 
 void stop_ui_server(void)

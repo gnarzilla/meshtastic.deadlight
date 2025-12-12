@@ -277,8 +277,8 @@ static gboolean on_incoming_connection(GSocketService *service,
     // Queue for processing
     GError *error = NULL;
     if (!g_thread_pool_push(context->worker_pool, conn, &error)) {
-        g_error("Failed to queue connection: %s", error->message);
-        g_error_free(error);
+        g_warning("Failed to queue connection %lu: %s", conn->id, error ? error->message : "unknown error");
+        g_clear_error(&error);
         
         // Remove from table
         g_mutex_lock(&context->network->connection_mutex);
