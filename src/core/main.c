@@ -240,6 +240,8 @@ static int run_interactive_mode(void) {
     if (!deadlight_config_load(g_context, opt_config_file, &error)) {
         g_error("Failed to load configuration: %s", error->message);
         g_error_free(error);
+        deadlight_context_free(g_context);
+        g_context = NULL;
         return 1;
     }
 
@@ -257,6 +259,8 @@ static int run_interactive_mode(void) {
     if (!deadlight_logging_init(g_context, &error)) {
         g_error("Failed to initialize logging: %s", error->message);
         g_error_free(error);
+        deadlight_context_free(g_context);
+        g_context = NULL;
         return 1;
     }
 
@@ -273,18 +277,24 @@ static int run_interactive_mode(void) {
     if (!deadlight_network_init(g_context, &error)) {
         g_error("Failed to initialize network: %s", error->message);
         g_error_free(error);
+        deadlight_context_free(g_context);
+        g_context = NULL;
         return 1;
     }
 
     if (!deadlight_ssl_init(g_context, &error)) {
         g_error("Failed to initialize SSL: %s", error->message);
         g_error_free(error);
+        deadlight_context_free(g_context);
+        g_context = NULL;
         return 1;
     }
 
     if (!deadlight_plugins_init(g_context, &error)) {
         g_error("Failed to initialize plugins: %s", error->message);
         g_error_free(error);
+        deadlight_context_free(g_context);
+        g_context = NULL;
         return 1;
     }
 
@@ -330,6 +340,8 @@ static int run_interactive_mode(void) {
     if (!deadlight_network_start_listener(g_context, port, &error)) {
         g_error("Failed to start listener: %s", error->message);
         g_error_free(error);
+        deadlight_context_free(g_context);
+        g_context = NULL;
         return 1;
     }
 
@@ -402,22 +414,11 @@ static int run_interactive_mode(void) {
     g_context->main_loop = g_main_loop_new(NULL, FALSE);
     g_main_loop_run(g_context->main_loop);
 
-    // Cleanup
+    // Cleanup (centralized in deadlight_context_free)
     g_info("Shutting down...");
-    
-    // Cleanup VPN if active
-    if (g_context->vpn) {
-        deadlight_vpn_gateway_cleanup(g_context);
-    }
-    
-    deadlight_network_stop(g_context);
-    deadlight_plugins_cleanup(g_context);
-    deadlight_ssl_cleanup(g_context);
 
-#ifdef ENABLE_UI
-    g_info("Stopping UI server...");
-    stop_ui_server();
-#endif
+    deadlight_context_free(g_context);
+    g_context = NULL;
 
     g_info("Deadlight proxy stopped");
     return 0;

@@ -39,6 +39,26 @@ void deadlight_network_tunnel_socket_connections(GSocketConnection *conn1, GSock
 static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remove_from_table);
 static void connection_pool_log_stats(ConnectionPool *pool);
 
+static void force_close_connection_io(DeadlightConnection *conn) {
+    if (!conn) return;
+
+    // Close TLS streams first (if present) to break blocking I/O in handlers.
+    if (conn->client_tls && G_IS_IO_STREAM(conn->client_tls)) {
+        g_io_stream_close(G_IO_STREAM(conn->client_tls), NULL, NULL);
+    }
+    if (conn->upstream_tls && G_IS_IO_STREAM(conn->upstream_tls)) {
+        g_io_stream_close(G_IO_STREAM(conn->upstream_tls), NULL, NULL);
+    }
+
+    // Close underlying socket streams.
+    if (conn->client_connection && G_IS_IO_STREAM(conn->client_connection)) {
+        g_io_stream_close(G_IO_STREAM(conn->client_connection), NULL, NULL);
+    }
+    if (conn->upstream_connection && G_IS_IO_STREAM(conn->upstream_connection)) {
+        g_io_stream_close(G_IO_STREAM(conn->upstream_connection), NULL, NULL);
+    }
+}
+
 static void _destroy_notify_connection (gpointer data)
 {
     DeadlightConnection *conn = (DeadlightConnection*)data;
@@ -155,6 +175,22 @@ void deadlight_network_stop(DeadlightContext *context) {
             g_socket_service_stop(context->network->listener);
             g_object_unref(context->network->listener);
             context->network->listener = NULL;
+        }
+
+        // Proactively close active connection I/O so workers unblock quickly.
+        if (context->connections) {
+            g_mutex_lock(&context->network->connection_mutex);
+
+            GHashTableIter iter;
+            gpointer key = NULL;
+            gpointer value = NULL;
+            g_hash_table_iter_init(&iter, context->connections);
+            while (g_hash_table_iter_next(&iter, &key, &value)) {
+                (void)key;
+                force_close_connection_io((DeadlightConnection *)value);
+            }
+
+            g_mutex_unlock(&context->network->connection_mutex);
         }
         
         // Shutdown thread pool (wait for workers to finish current tasks)

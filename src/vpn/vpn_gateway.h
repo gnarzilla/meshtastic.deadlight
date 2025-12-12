@@ -107,6 +107,11 @@ struct _DeadlightVPNManager {
     guint64 active_connections;
     guint64 bytes_sent;
     guint64 bytes_received;
+
+    // Periodic timer source IDs (so we can reliably cancel on teardown)
+    guint idle_sessions_cleanup_source_id;
+    guint idle_udp_sessions_cleanup_source_id;
+    guint router_advertisement_source_id;
 };
 
 // Public API

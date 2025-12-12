@@ -2350,9 +2350,9 @@ gboolean deadlight_vpn_gateway_init(DeadlightContext *context, GError **error) {
     g_mutex_init(&vpn->sessions_mutex);
 
     // Setup periodic cleanup of idle sessions
-    g_timeout_add_seconds(60, cleanup_idle_sessions, vpn);
-    g_timeout_add_seconds(10, cleanup_idle_udp_sessions, vpn);  // Run every 10 seconds for UDP
-    g_timeout_add_seconds(10, send_periodic_router_advertisement, vpn);
+    vpn->idle_sessions_cleanup_source_id = g_timeout_add_seconds(60, cleanup_idle_sessions, vpn);
+    vpn->idle_udp_sessions_cleanup_source_id = g_timeout_add_seconds(10, cleanup_idle_udp_sessions, vpn);  // Run every 10 seconds for UDP
+    vpn->router_advertisement_source_id = g_timeout_add_seconds(10, send_periodic_router_advertisement, vpn);
 
     log_info("VPN: Gateway initialized successfully on %s", vpn->tun_device_name);
     return TRUE;
@@ -2365,6 +2365,20 @@ void deadlight_vpn_gateway_cleanup(DeadlightContext *context) {
     DeadlightVPNManager *vpn = context->vpn;
 
     log_info("VPN: Shutting down gateway...");
+
+    // Cancel periodic timers FIRST (they may reference vpn/session tables)
+    if (vpn->idle_sessions_cleanup_source_id > 0) {
+        g_source_remove(vpn->idle_sessions_cleanup_source_id);
+        vpn->idle_sessions_cleanup_source_id = 0;
+    }
+    if (vpn->idle_udp_sessions_cleanup_source_id > 0) {
+        g_source_remove(vpn->idle_udp_sessions_cleanup_source_id);
+        vpn->idle_udp_sessions_cleanup_source_id = 0;
+    }
+    if (vpn->router_advertisement_source_id > 0) {
+        g_source_remove(vpn->router_advertisement_source_id);
+        vpn->router_advertisement_source_id = 0;
+    }
 
     // Remove TUN watch
     if (vpn->tun_watch_id > 0) {
