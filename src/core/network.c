@@ -39,6 +39,54 @@ void deadlight_network_tunnel_socket_connections(GSocketConnection *conn1, GSock
 static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remove_from_table);
 static void connection_pool_log_stats(ConnectionPool *pool);
 
+static void deadlight_conn_info_free(gpointer data)
+{
+    DeadlightConnInfo *info = (DeadlightConnInfo *)data;
+    if (!info) return;
+    g_free(info->remote);
+    g_free(info);
+}
+
+/**
+ * Snapshot the current connections under the network connection mutex.
+ *
+ * Returns a GPtrArray of DeadlightConnInfo*. Caller must free with:
+ *   g_ptr_array_free(arr, TRUE);
+ */
+GPtrArray *deadlight_network_snapshot_connections(DeadlightContext *context)
+{
+    g_return_val_if_fail(context != NULL, NULL);
+
+    GPtrArray *snapshot = g_ptr_array_new_with_free_func(deadlight_conn_info_free);
+
+    if (!context->network || !context->connections) {
+        return snapshot;
+    }
+
+    g_mutex_lock(&context->network->connection_mutex);
+    {
+        GHashTableIter iter;
+        gpointer key, value;
+        g_hash_table_iter_init(&iter, context->connections);
+        while (g_hash_table_iter_next(&iter, &key, &value)) {
+            (void)key;
+            DeadlightConnection *conn = (DeadlightConnection *)value;
+            if (!conn) continue;
+
+            DeadlightConnInfo *info = g_new0(DeadlightConnInfo, 1);
+            info->id = conn->id;
+            info->remote = g_strdup(conn->client_address);
+            info->protocol = conn->protocol;
+            info->tx = conn->bytes_client_to_upstream;
+            info->rx = conn->bytes_upstream_to_client;
+            g_ptr_array_add(snapshot, info);
+        }
+    }
+    g_mutex_unlock(&context->network->connection_mutex);
+
+    return snapshot;
+}
+
 static void _destroy_notify_connection (gpointer data)
 {
     DeadlightConnection *conn = (DeadlightConnection*)data;

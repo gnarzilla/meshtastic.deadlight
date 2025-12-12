@@ -166,21 +166,18 @@ handle_api_connections(DeadlightContext *context, struct MHD_Connection *conn, c
     GString *json_str = g_string_new("[");
     gboolean first = TRUE;
 
-    // Lock the mutex to safely iterate over the connections hash table
-    g_mutex_lock(&context->stats_mutex);
-
-    if (context->connections) {
-        GHashTableIter iter;
-        gpointer key, value;
-        g_hash_table_iter_init(&iter, context->connections);
-        while (g_hash_table_iter_next(&iter, &key, &value)) {
-            DeadlightConnection *d_conn = (DeadlightConnection *)value;
+    // Snapshot the current connections under the network connection mutex,
+    // then build JSON after releasing the lock.
+    GPtrArray *snapshot = deadlight_network_snapshot_connections(context);
+    if (snapshot) {
+        for (guint i = 0; i < snapshot->len; i++) {
+            DeadlightConnInfo *info = g_ptr_array_index(snapshot, i);
+            if (!info) continue;
 
             if (!first) {
                 g_string_append(json_str, ",");
             }
-            
-            // Extract the data for the JSON response
+
             g_string_append_printf(json_str, "{"
                 "\"id\": %" G_GUINT64_FORMAT ","
                 "\"remote\": \"%s\","
@@ -188,18 +185,16 @@ handle_api_connections(DeadlightContext *context, struct MHD_Connection *conn, c
                 "\"tx\": %" G_GUINT64_FORMAT ","
                 "\"rx\": %" G_GUINT64_FORMAT
                 "}",
-                d_conn->id,
-                d_conn->client_address ? d_conn->client_address : "N/A",
-                deadlight_protocol_to_string(d_conn->protocol),
-                d_conn->bytes_client_to_upstream,
-                d_conn->bytes_upstream_to_client
+                info->id,
+                info->remote ? info->remote : "N/A",
+                deadlight_protocol_to_string(info->protocol),
+                info->tx,
+                info->rx
             );
             first = FALSE;
         }
+        g_ptr_array_free(snapshot, TRUE);
     }
-
-    // Unlock the mutex as soon as we're done with the shared data
-    g_mutex_unlock(&context->stats_mutex);
 
     g_string_append(json_str, "]");
 

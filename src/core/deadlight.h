@@ -169,6 +169,18 @@ struct _DeadlightConnection {
     gint upstream_fd;
 };
 
+/**
+ * Snapshot information for a connection, used by modules that must enumerate
+ * connections without directly touching the shared connection table.
+ */
+struct _DeadlightConnInfo {
+    guint64 id;
+    gchar *remote;
+    DeadlightProtocol protocol;
+    guint64 tx;
+    guint64 rx;
+};
+
 struct _DeadlightRequest {
     gchar *method;
     gchar *uri;
@@ -243,6 +255,7 @@ void deadlight_logging_cleanup(DeadlightContext *context);
 gboolean deadlight_network_init(DeadlightContext *context, GError **error);
 gboolean deadlight_network_start_listener(DeadlightContext *context, gint port, GError **error);
 void deadlight_network_stop(DeadlightContext *context);
+GPtrArray *deadlight_network_snapshot_connections(DeadlightContext *context);
 gboolean deadlight_network_connect_upstream(
     DeadlightConnection *conn,
     GError **error
