@@ -5,6 +5,9 @@
 #include "core/plugins.h"
 #include "core/logging.h"
 #include "meshtastic.h"
+#include "meshtastic_framing.h"
+#include "meshtastic_transport.h"
+#include "meshtastic_http_bridge.h"
 
 // Nanopb includes (after generation)
 #include "pb.h"
@@ -18,28 +21,79 @@
 #define DEFAULT_CUSTOM_PORT 100
 
 // Forward declarations
-static gboolean send_chunk(MeshtasticData *data, DeadlightConnection *conn, const uint8_t *payload, size_t len, uint32_t seq, uint32_t total);
+static gboolean send_chunk(MeshtasticData *data,
+                           guint32 to_node_id,
+                           guint64 session_id,
+                           MeshtasticDirection dir,
+                           const uint8_t *payload,
+                           size_t len,
+                           uint32_t seq,
+                           uint32_t total);
 static gpointer reader_thread_func(gpointer user_data);
-static gboolean reassemble_and_inject(MeshtasticData *data, DeadlightConnection *conn, meshtastic_MeshPacket *packet);
+static void handle_complete_message(MeshtasticData *data, MeshtasticCompleteMessage *m);
+static gboolean on_request_headers(DeadlightRequest *request);
+static void gateway_pool_worker(gpointer work_ptr, gpointer user_data);
 
-// Helper to free GByteArray
-static void free_byte_array(gpointer data) {
-    if (data) {
-        g_byte_array_free((GByteArray *)data, TRUE);
-    }
-}
+typedef struct {
+    MeshtasticData *data;
+    guint32 from;
+    guint64 session;
+    GByteArray *req;
+} GatewayWork;
 
 // Init: Load config, open serial, start reader
 static gboolean meshtastic_init(DeadlightContext *context) {
     g_info("Initializing MeshtasticTunnel plugin...");
 
     MeshtasticData *data = g_new0(MeshtasticData, 1);
+    data->context = context;
     g_mutex_init(&data->mutex);
-    data->reassembly = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, free_byte_array);
     data->enabled = deadlight_config_get_bool(context, "plugin.meshtastic", "enabled", TRUE);
     data->serial_device = deadlight_config_get_string(context, "plugin.meshtastic", "serial_device", "/dev/ttyUSB0");
     data->channel_name = deadlight_config_get_string(context, "plugin.meshtastic", "channel", "LongFast");
+    data->channel_index = deadlight_config_get_int(context, "plugin.meshtastic", "channel_index", 0);
     data->custom_port = (uint32_t)deadlight_config_get_int(context, "plugin.meshtastic", "custom_port", DEFAULT_CUSTOM_PORT);
+
+    // Mode: client|gateway (default client)
+    gchar *mode_str = deadlight_config_get_string(context, "plugin.meshtastic", "mode", "client");
+    if (mode_str && g_ascii_strcasecmp(mode_str, "gateway") == 0) {
+        data->mode = MESHTASTIC_MODE_GATEWAY;
+    } else {
+        data->mode = MESHTASTIC_MODE_CLIENT;
+    }
+    g_free(mode_str);
+
+    // Client-mode destination gateway node id (hex string accepted, default 0)
+    gchar *gw_str = deadlight_config_get_string(context, "plugin.meshtastic", "gateway_node_id", "0x0");
+    if (gw_str) {
+        gchar *endp = NULL;
+        guint64 v = g_ascii_strtoull(gw_str, &endp, 0);
+        data->gateway_node_id = (guint32)v;
+        g_free(gw_str);
+    }
+
+    // Reassembly safety knobs (optional config, reasonable defaults)
+    guint max_sessions = (guint)deadlight_config_get_int(context, "plugin.meshtastic", "max_sessions", 64);
+    guint ttl_seconds = (guint)deadlight_config_get_int(context, "plugin.meshtastic", "session_ttl_seconds", 30);
+    guint64 max_bytes = (guint64)deadlight_config_get_size(context, "plugin.meshtastic", "max_session_bytes", 262144);
+
+    // Determine payload capacity based on generated nanopb struct field size.
+    // Keep it <= MAX_CHUNK_SIZE (safe Meshtastic limit).
+    meshtastic_Data tmp = meshtastic_Data_init_default;
+    guint payload_cap = (guint)MIN((guint)MAX_CHUNK_SIZE, (guint)sizeof(tmp.payload.bytes));
+    guint header_size = (guint)sizeof(MeshtasticDlHeader);
+    guint chunk_data_max = payload_cap > header_size ? (payload_cap - header_size) : 0;
+    data->chunk_data_max = chunk_data_max;
+    data->reassembly = meshtastic_reassembly_new(max_sessions, max_bytes, ttl_seconds, chunk_data_max);
+
+    data->pending = g_hash_table_new_full(g_int64_hash, g_int64_equal, g_free, (GDestroyNotify)g_async_queue_unref);
+    g_mutex_init(&data->pending_mutex);
+    data->next_session_id = 1;
+
+    if (data->mode == MESHTASTIC_MODE_GATEWAY) {
+        // Keep gateway work off the serial thread
+        data->gateway_pool = g_thread_pool_new(gateway_pool_worker, data, 2, FALSE, NULL);
+    }
     data->running = TRUE;
 
     // Open serial (PROTO mode: 38400 baud typical)
@@ -62,8 +116,13 @@ static gboolean meshtastic_init(DeadlightContext *context) {
     }
     g_hash_table_insert(context->plugins_data, g_strdup("meshtastic"), data);
 
-    g_info("MeshtasticTunnel initialized: device=%s, channel=%s, port=%u", 
-           data->serial_device, data->channel_name, data->custom_port);
+    g_info("MeshtasticTunnel initialized: mode=%s device=%s channel_index=%d channel=%s port=%u gateway_node_id=0x%08x",
+           data->mode == MESHTASTIC_MODE_GATEWAY ? "gateway" : "client",
+           data->serial_device,
+           data->channel_index,
+           data->channel_name,
+           data->custom_port,
+           (unsigned)data->gateway_node_id);
 
     return TRUE;
 }
@@ -83,31 +142,34 @@ static void meshtastic_cleanup(DeadlightContext *context) {
         g_io_channel_shutdown(data->serial_channel, TRUE, NULL);
         g_io_channel_unref(data->serial_channel);
     }
-    g_hash_table_destroy(data->reassembly);
+    if (data->gateway_pool) {
+        g_thread_pool_free(data->gateway_pool, TRUE, TRUE);
+        data->gateway_pool = NULL;
+    }
+    meshtastic_reassembly_free((MeshtasticReassemblyTable *)data->reassembly);
+    if (data->pending) {
+        g_hash_table_destroy(data->pending);
+        data->pending = NULL;
+    }
+    g_mutex_clear(&data->pending_mutex);
     g_mutex_clear(&data->mutex);
     g_free(data->serial_device);
     g_free(data->channel_name);
     g_free(data);
 }
 
-// Hook: Chunk and send request body over Meshtastic
-static gboolean on_request_body(DeadlightRequest *request) {
+static gboolean on_request_headers(DeadlightRequest *request) {
     if (!request || !request->connection || !request->connection->context) return TRUE;
-
     MeshtasticData *data = g_hash_table_lookup(request->connection->context->plugins_data, "meshtastic");
     if (!data || !data->enabled) return TRUE;
+    if (request->connection->protocol != DEADLIGHT_PROTOCOL_HTTP) return TRUE;
 
-    GByteArray *body = request->body;
-    if (!body || body->len == 0) return TRUE;
-
-    size_t num_chunks = (body->len + MAX_CHUNK_SIZE - 1) / MAX_CHUNK_SIZE;
-    for (size_t i = 0; i < num_chunks; i++) {
-        size_t offset = i * MAX_CHUNK_SIZE;
-        size_t chunk_len = MIN(MAX_CHUNK_SIZE, body->len - offset);
-        if (!send_chunk(data, request->connection, body->data + offset, chunk_len, i, num_chunks)) {
-            return FALSE;  // Send failed
-        }
+    // Client-mode: handle HTTP requests over mesh by returning FALSE (meaning \"plugin handled response\").
+    if (data->mode == MESHTASTIC_MODE_CLIENT) {
+        gboolean handled = meshtastic_client_forward_http(data, request);
+        return handled ? FALSE : TRUE;
     }
+
     return TRUE;
 }
 
@@ -118,26 +180,37 @@ static gboolean on_response_body(DeadlightResponse *response G_GNUC_UNUSED) {
 }
 
 // Send a single chunk as Meshtastic MeshPacket
-static gboolean send_chunk(MeshtasticData *data, DeadlightConnection *conn, const uint8_t *payload, size_t len, uint32_t seq, uint32_t total) {
-    // Create custom chunk struct
-    MeshtasticChunk chunk = { .seq_num = seq, .total_chunks = total, .payload_len = len };
-    memcpy(chunk.payload, payload, len);
+static gboolean send_chunk(MeshtasticData *data,
+                           guint32 to_node_id,
+                           guint64 session_id,
+                           MeshtasticDirection dir,
+                           const uint8_t *payload,
+                           size_t len,
+                           uint32_t seq,
+                           uint32_t total) {
+    if (!data || !data->serial_channel) return FALSE;
 
-    // Encode chunk to bytes (use nanopb for your custom PB if defined; here simple memcpy for demo)
-    uint8_t chunk_buf[sizeof(MeshtasticChunk)];
-    memcpy(chunk_buf, &chunk, sizeof(chunk));
+    GByteArray *wire = meshtastic_transport_build_chunk(session_id, dir, seq, total, payload, (guint16)len);
 
     // Wrap in Meshtastic Data
     meshtastic_Data pb_data = meshtastic_Data_init_default;
     pb_data.portnum = (meshtastic_PortNum)data->custom_port;
-    pb_data.payload.size = sizeof(chunk_buf);
-    memcpy(pb_data.payload.bytes, chunk_buf, sizeof(chunk_buf));
+    if (wire->len > sizeof(pb_data.payload.bytes)) {
+        g_warning("Meshtastic payload too large for nanopb field (%u > %u)",
+                  (unsigned)wire->len, (unsigned)sizeof(pb_data.payload.bytes));
+        g_byte_array_free(wire, TRUE);
+        return FALSE;
+    }
+    pb_data.payload.size = (pb_size_t)wire->len;
+    memcpy(pb_data.payload.bytes, wire->data, wire->len);
+    g_byte_array_free(wire, TRUE);
 
     // Wrap in MeshPacket
     meshtastic_MeshPacket packet = meshtastic_MeshPacket_init_default;
     packet.decoded = pb_data;
     // Set channel, from/to, etc. (use defaults or config)
-    packet.channel = 0; // Default channel
+    packet.channel = (uint32_t)data->channel_index;
+    packet.to = to_node_id;
 
     // Encode packet
     uint8_t packet_buf[512];
@@ -160,12 +233,10 @@ static gboolean send_chunk(MeshtasticData *data, DeadlightConnection *conn, cons
         return FALSE;
     }
 
-    // Send to serial
+    // Send to serial (length-delimited framing)
     g_mutex_lock(&data->mutex);
     GError *error = NULL;
-    gsize written;
-    g_io_channel_write_chars(data->serial_channel, (gchar*)to_buf, to_ostream.bytes_written, &written, &error);
-    g_io_channel_flush(data->serial_channel, NULL);
+    meshtastic_framing_write_delimited(data->serial_channel, to_buf, to_ostream.bytes_written, &error);
     g_mutex_unlock(&data->mutex);
 
     if (error) {
@@ -174,18 +245,20 @@ static gboolean send_chunk(MeshtasticData *data, DeadlightConnection *conn, cons
         return FALSE;
     }
 
-    g_debug("Sent Meshtastic chunk %u/%u for conn %lu", seq, total, conn->id);
+    g_debug("Sent Meshtastic chunk %u/%u session=%" G_GUINT64_FORMAT " dir=%u to=0x%08x",
+            seq, total, (guint64)session_id, (unsigned)dir, (unsigned)to_node_id);
     return TRUE;
 }
 
 // Reader thread: Poll serial for FromRadio, extract packets, reassemble
 static gpointer reader_thread_func(gpointer user_data) {
     MeshtasticData *data = (MeshtasticData *)user_data;
+    GByteArray *inbuf = g_byte_array_new();
+    gint64 next_cleanup = g_get_monotonic_time() + (5 * G_USEC_PER_SEC);
 
     while (data->running) {
-        // Read FromRadio (assuming framed; Meshtastic serial uses length-prefix)
-        uint8_t buf[512];  // Max packet
-        gsize read_len;
+        guint8 buf[1024];
+        gsize read_len = 0;
         GError *error = NULL;
         GIOStatus status = g_io_channel_read_chars(data->serial_channel, (gchar*)buf, sizeof(buf), &read_len, &error);
 
@@ -196,63 +269,101 @@ static gpointer reader_thread_func(gpointer user_data) {
         }
 
         if (read_len > 0) {
-            // Decode FromRadio
+            g_byte_array_append(inbuf, buf, read_len);
+        }
+
+        // Drain all complete frames
+        for (;;) {
+            guint8 *frame = NULL;
+            gsize frame_len = 0;
+            if (!meshtastic_framing_try_read_frame(inbuf, &frame, &frame_len)) {
+                break;
+            }
+
             meshtastic_FromRadio from_radio = meshtastic_FromRadio_init_default;
-            pb_istream_t istream = pb_istream_from_buffer(buf, read_len);
+            pb_istream_t istream = pb_istream_from_buffer(frame, frame_len);
             if (pb_decode(&istream, meshtastic_FromRadio_fields, &from_radio)) {
-                // Check which union variant is set - the union is anonymous
                 if (from_radio.which_payload_variant == meshtastic_FromRadio_packet_tag) {
                     meshtastic_MeshPacket *packet = &from_radio.packet;
                     if (packet->decoded.portnum == (meshtastic_PortNum)data->custom_port) {
-                        // Find conn (assume conn_id in packet or broadcast; here dummy)
-                        DeadlightConnection *conn = NULL;  // Lookup or create new conn
-                        reassemble_and_inject(data, conn, packet);
+                        guint32 from_id = (guint32)packet->from;
+                        MeshtasticCompleteMessage *m = meshtastic_reassembly_ingest(
+                            (MeshtasticReassemblyTable *)data->reassembly,
+                            from_id,
+                            packet->decoded.payload.bytes,
+                            packet->decoded.payload.size
+                        );
+                        if (m) {
+                            handle_complete_message(data, m);
+                            meshtastic_complete_message_free(m);
+                        }
                     }
                 }
             }
+            g_free(frame);
         }
 
-        g_usleep(100000);  // Poll every 100ms
+        // Periodic expiry cleanup (keep table bounded if packets are lost)
+        gint64 now = g_get_monotonic_time();
+        if (now >= next_cleanup) {
+            meshtastic_reassembly_cleanup_expired((MeshtasticReassemblyTable *)data->reassembly);
+            next_cleanup = now + (5 * G_USEC_PER_SEC);
+        }
     }
+
+    g_byte_array_free(inbuf, TRUE);
     return NULL;
 }
 
-// Reassemble chunks and inject as response
-static gboolean reassemble_and_inject(MeshtasticData *data, DeadlightConnection *conn, meshtastic_MeshPacket *packet G_GNUC_UNUSED) {
-    if (!conn) return FALSE;  // Need valid connection
-    
-    // Extract chunk from payload
-    MeshtasticChunk chunk;
-    // pb_decode packet->decoded.payload into chunk (add actual)
-    memcpy(&chunk, packet->decoded.payload.bytes, sizeof(chunk));
+static void handle_complete_message(MeshtasticData *data, MeshtasticCompleteMessage *m) {
+    if (!data || !m || !m->message) return;
 
-    gchar *conn_key = g_strdup_printf("%lu", conn->id);
-    GByteArray *assembly = g_hash_table_lookup(data->reassembly, conn_key);
-    if (!assembly) {
-        assembly = g_byte_array_new();
-        g_hash_table_insert(data->reassembly, conn_key, assembly);
-    } else {
-        g_free(conn_key);
-    }
+    if (data->mode == MESHTASTIC_MODE_CLIENT && m->direction == MESHTASTIC_DIR_RESPONSE) {
+        // Deliver response to waiting local request
+        guint64 sid = m->session_id;
+        g_mutex_lock(&data->pending_mutex);
+        GAsyncQueue *q = data->pending ? g_hash_table_lookup(data->pending, &sid) : NULL;
+        if (q) g_async_queue_ref(q);
+        g_mutex_unlock(&data->pending_mutex);
 
-    // Append chunk (at seq position if out-of-order)
-    size_t target_size = (chunk.seq_num + 1) * MAX_CHUNK_SIZE;
-    if (assembly->len < target_size) {
-        g_byte_array_set_size(assembly, target_size);
-    }
-    memcpy(assembly->data + (chunk.seq_num * MAX_CHUNK_SIZE), chunk.payload, chunk.payload_len);
-
-    // Check complete
-    if (assembly->len >= (chunk.total_chunks * MAX_CHUNK_SIZE)) {
-        // Inject into response
-        if (conn->current_response) {
-            g_byte_array_append(conn->current_response->body, assembly->data, assembly->len);
+        if (q) {
+            // Pass ownership to queue item
+            GByteArray *copy = g_byte_array_new();
+            g_byte_array_append(copy, m->message->data, m->message->len);
+            g_async_queue_push(q, copy);
+            g_async_queue_unref(q);
         }
-        g_hash_table_remove(data->reassembly, g_strdup_printf("%lu", conn->id));
-        g_debug("Reassembled %u bytes for conn %lu", assembly->len, conn->id);
+        return;
     }
 
-    return TRUE;
+    if (data->mode == MESHTASTIC_MODE_GATEWAY && m->direction == MESHTASTIC_DIR_REQUEST) {
+        // Offload upstream fetch and mesh response
+        if (data->gateway_pool) {
+            GByteArray *req_copy = g_byte_array_new();
+            g_byte_array_append(req_copy, m->message->data, m->message->len);
+            GatewayWork *w = g_new0(GatewayWork, 1);
+            w->data = data;
+            w->from = m->from_node_id;
+            w->session = m->session_id;
+            w->req = req_copy;
+            g_thread_pool_push(data->gateway_pool, w, NULL);
+        } else {
+            GByteArray *req_copy = g_byte_array_new();
+            g_byte_array_append(req_copy, m->message->data, m->message->len);
+            meshtastic_gateway_handle_http_request(data, m->from_node_id, m->session_id, req_copy);
+            g_byte_array_free(req_copy, TRUE);
+        }
+        return;
+    }
+}
+
+static void gateway_pool_worker(gpointer work_ptr, gpointer user_data) {
+    (void)user_data;
+    GatewayWork *w = (GatewayWork *)work_ptr;
+    if (!w) return;
+    meshtastic_gateway_handle_http_request(w->data, w->from, w->session, w->req);
+    g_byte_array_free(w->req, TRUE);
+    g_free(w);
 }
 
 // Plugin definition (matches RateLimiter pattern)
@@ -263,8 +374,8 @@ static DeadlightPlugin meshtastic_plugin = {
     .author = "Deadlight Team",
     .init = meshtastic_init,
     .cleanup = meshtastic_cleanup,
-    .on_request_headers = NULL,
-    .on_request_body = on_request_body,
+    .on_request_headers = on_request_headers,
+    .on_request_body = NULL,
     .on_response_headers = NULL,
     .on_response_body = on_response_body,
     .on_connection_accept = NULL,

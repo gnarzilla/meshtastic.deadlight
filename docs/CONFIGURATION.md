@@ -134,6 +134,37 @@ auth_realm=Deadlight Proxy
 #Require authentication for all requests
 require_auth=false
 
+[plugin.meshtastic]
+# Enable Meshtastic tunnel plugin
+enabled=true
+
+# Serial device connected to the Meshtastic radio
+serial_device=/dev/ttyUSB0
+
+# Operating mode:
+# - client: accept local proxy traffic and forward it over the mesh to a gateway
+# - gateway: receive mesh requests and proxy them to the Internet
+mode=client
+
+# Client mode: the gateway node ID to send requests to (hex)
+gateway_node_id=0x00000000
+
+# Channel selection (prefer channel_index). If unset, channel name may be used as a fallback.
+channel_index=0
+channel=LongFast
+
+# Custom Meshtastic port number for Deadlight tunnel payloads (private range recommended)
+custom_port=257
+
+# Reassembly safety limits (to prevent unbounded RAM use on packet loss)
+max_sessions=64
+session_ttl_seconds=30
+max_session_bytes=256KB
+
+# Mesh protocol note:
+# - This configuration currently targets HTTP request/response over mesh.
+# - CONNECT tunneling / generic TCP streams over mesh are not supported yet.
+
 [cache]
 #Enable response caching
 enabled=true

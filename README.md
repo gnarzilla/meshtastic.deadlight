@@ -471,3 +471,29 @@ Includes:
 ---
 
 **Status**: testing-ready v1.0.0 | **Maintained by**: [@gnarzilla](https://github.com/gnarzilla)
+
+## Meshtastic plugin build prerequisites (important)
+
+The Meshtastic tunnel plugin (`bin/plugins/meshtastic.so`) is built using **nanopb** + the **Meshtastic .proto** set.
+
+The Makefile expects these to exist locally:
+
+- `src/plugins/nanopb/` (nanopb runtime + generator)
+- `src/plugins/include/nanopb/` (nanopb headers)
+- `src/plugins/protobufs/meshtastic/` (Meshtastic `.proto` files)
+
+If those directories are missing, you can still build/run the core proxy, but the Meshtastic plugin build will fail until you provide the prerequisites.
+
+### Build the plugin
+
+Once the prerequisites directories exist, you can build plugins with:
+
+```bash
+make clean
+make plugins
+```
+
+### Current mesh support scope
+
+- **Supported over mesh in this PR**: HTTP request/response (best-effort, `Connection: close` forced).
+- **Not supported yet**: `CONNECT` tunneling / generic TCP streams over mesh.

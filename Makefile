@@ -190,12 +190,18 @@ $(MESHTASTIC_PB_C) $(MESHTASTIC_PB_H): $(PROTO_FILES)
 $(PLUGIN_BINDIR)/meshtastic.so: \
 		$(PLUGINDIR)/meshtastic.c \
 		$(PLUGINDIR)/meshtastic.h \
+		$(PLUGINDIR)/meshtastic_framing.c \
+		$(PLUGINDIR)/meshtastic_framing.h \
+		$(PLUGINDIR)/meshtastic_transport.c \
+		$(PLUGINDIR)/meshtastic_transport.h \
+		$(PLUGINDIR)/meshtastic_http_bridge.c \
+		$(PLUGINDIR)/meshtastic_http_bridge.h \
 		$(MESHTASTIC_PB_C) \
 		$(NANOPB_SOURCES) \
 		| $(PLUGIN_BINDIR)
 	@echo "Building MeshtasticTunnel plugin..."
 	@$(CC) $(ALL_CFLAGS) $(NANOPB_CFLAGS) -fPIC -shared -o $@ \
-		$(PLUGINDIR)/meshtastic.c $(MESHTASTIC_PB_C) $(NANOPB_SOURCES) $(ALL_LIBS)
+		$(PLUGINDIR)/meshtastic.c $(PLUGINDIR)/meshtastic_framing.c $(PLUGINDIR)/meshtastic_transport.c $(PLUGINDIR)/meshtastic_http_bridge.c $(MESHTASTIC_PB_C) $(NANOPB_SOURCES) $(ALL_LIBS)
 
 PLUGIN_TARGETS += $(PLUGIN_BINDIR)/meshtastic.so
 

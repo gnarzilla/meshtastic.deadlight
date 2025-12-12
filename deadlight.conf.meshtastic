@@ -148,8 +148,28 @@ require_auth=false
 [plugin.meshtastic]
 enabled = true
 serial_device = /dev/ttyUSB0        # or whatever your node shows
+# Mode selects whether this node behaves as a mesh "client" (accept local proxy
+# traffic and forward over mesh) or a mesh "gateway" (receive mesh requests and
+# proxy to the Internet).
+mode = client                        # client|gateway
+
+# Gateway mode routing (used by client mode). Your gateway radio's node ID.
+# Example: 0x12345678
+gateway_node_id = 0x00000000
+
+# Prefer channel_index (stable). If unset, channel name may be used as a fallback.
+channel_index = 0
 channel = LongFast
 custom_port = 257                   # safe private port
+
+# Reassembly safety limits (to prevent unbounded RAM use on packet loss)
+max_sessions = 64
+session_ttl_seconds = 30
+max_session_bytes = 256KB
+
+# Mesh support note:
+# - HTTP request/response over mesh is supported (best-effort).
+# - CONNECT tunneling / generic TCP streams over mesh are not supported yet.
 
 [cache]
 #Enable response caching
