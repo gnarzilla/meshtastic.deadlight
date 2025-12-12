@@ -30,9 +30,10 @@ void deadlight_register_http_handler(void) {
 
 static gsize http_detect(const guint8 *data, gsize len) {
     // --- Check if it's a WebSocket upgrade first ---
+    gchar *request = NULL;
     gchar *request_lower = NULL;
     if (len > 20) { // A reasonable length to check headers
-        gchar *request = g_strndup((const gchar*)data, len);
+        request = g_strndup((const gchar*)data, len);
         request_lower = g_ascii_strdown(request, -1);
         
         // If it has WebSocket headers, it's NOT for the plain HTTP handler.
@@ -45,6 +46,7 @@ static gsize http_detect(const guint8 *data, gsize len) {
 
     // Free the temp string if we allocated it
     if (request_lower) g_free(request_lower);
+    if (request) g_free(request);
 
     // --- ORIGINAL LOGIC: If it's not WebSocket, check for standard HTTP ---
     const gchar *http_methods[] = {"GET ", "POST ", "PUT ", "DELETE ", "HEAD ", "OPTIONS ", "TRACE ", "CONNECT ", "PATCH ", NULL};
