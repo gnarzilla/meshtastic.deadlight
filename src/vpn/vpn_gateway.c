@@ -1,5 +1,5 @@
 /**
- * Deadlight VPN Gateway - Kernel TCP Implementation
+ * Deadlight Meshtastic VPN Gateway - Kernel TCP Implementation
  * Uses real kernel sockets, no userspace TCP stack
  * Phase 1: IPv4 TCP/UDP Support
  */
@@ -904,21 +904,11 @@ static VPNSession *vpn_session_new(DeadlightVPNManager *vpn, guint32 client_ip,
     VPNSession *session = g_new0(VPNSession, 1);
     
     // Store IPv4 addresses in IPv4-mapped IPv6 format
-    memset(&session->client_ip, 0, sizeof(struct in6_addr));
-    session->client_ip.__in6_u.__u6_addr8[10] = 0xFF;
-    session->client_ip.__in6_u.__u6_addr8[11] = 0xFF;
     guint32 client_ip_net = htonl(client_ip);
+    guint32 dest_ip_net   = htonl(dest_ip);
+
     ipv4_to_mapped(client_ip_net, &session->client_ip);
-    ipv4_to_mapped(htonl(dest_ip), &session->dest_ip);
-    memcpy(&session->client_ip.__in6_u.__u6_addr8[12], &client_ip_net, 4);
-    
-    memset(&session->dest_ip, 0, sizeof(struct in6_addr));
-    session->dest_ip.__in6_u.__u6_addr8[10] = 0xFF;
-    session->dest_ip.__in6_u.__u6_addr8[11] = 0xFF;
-    guint32 dest_ip_net = htonl(dest_ip);
-    memcpy(&session->dest_ip.__in6_u.__u6_addr8[12], &dest_ip_net, 4);
-    ipv4_to_mapped(htonl(client_ip), &session->client_ip);
-    ipv4_to_mapped(htonl(dest_ip),   &session->dest_ip);
+    ipv4_to_mapped(dest_ip_net,   &session->dest_ip);
     
     session->client_port = client_port;
     session->dest_port = dest_port;
@@ -1042,19 +1032,11 @@ static VPNUDPSession* vpn_udp_session_new(DeadlightVPNManager *vpn,
     VPNUDPSession *session = g_new0(VPNUDPSession, 1);
     
     // Store IPv4 addresses in IPv4-mapped IPv6 format
-    memset(&session->client_ip, 0, sizeof(struct in6_addr));
-    session->client_ip.__in6_u.__u6_addr8[10] = 0xFF;
-    session->client_ip.__in6_u.__u6_addr8[11] = 0xFF;
     guint32 client_ip_net = htonl(client_ip);
     guint32 dest_ip_net   = htonl(dest_ip);
+
     ipv4_to_mapped(client_ip_net, &session->client_ip);
     ipv4_to_mapped(dest_ip_net,   &session->dest_ip);
-    memcpy(&session->client_ip.__in6_u.__u6_addr8[12], &client_ip_net, 4);
-    
-    memset(&session->dest_ip, 0, sizeof(struct in6_addr));
-    session->dest_ip.__in6_u.__u6_addr8[10] = 0xFF;
-    session->dest_ip.__in6_u.__u6_addr8[11] = 0xFF;
-    memcpy(&session->dest_ip.__in6_u.__u6_addr8[12], &dest_ip_net, 4);
     
     session->client_port = client_port;
     session->dest_port = dest_port;
@@ -1496,7 +1478,7 @@ static gboolean on_udp_upstream_readable(GIOChannel *source, GIOCondition condit
         return G_SOURCE_CONTINUE;
     }
     
-    guint8 buffer[2048];
+    guint8 buffer[65535];
     GError *error = NULL;
     gssize bytes = g_socket_receive(session->upstream_socket, (gchar *)buffer,
                                    sizeof(buffer), NULL, &error);
