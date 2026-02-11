@@ -3,7 +3,7 @@
 #define DEADLIGHT_RATELIMITER_H
 
 #include <glib.h>
-#include "deadlight.h"
+#include "core/deadlight.h"
 
 typedef struct {
     gint64 timestamp;      // When this window started

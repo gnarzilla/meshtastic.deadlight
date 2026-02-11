@@ -1,119 +1,357 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-g">
-    <title>Deadlight Meshtastic Proxy Dashboard</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DEADLIGHT // CONSOLE</title>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; background: #f4f4f4; color: #333; margin: 0; padding: 20px; }
-        .container { max-width: 960px; margin: auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        h1, h2 { color: #111; border-bottom: 2px solid #eee; padding-bottom: 10px; }
-        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
-        th { background-color: #f8f8f8; }
-        .status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-top: 20px; }
-        .status-card { background: #fdfdfd; padding: 15px; border-radius: 5px; border: 1px solid #eee; }
-        .status-card h3 { margin-top: 0; font-size: 1rem; color: #555; }
-        .status-card p { margin: 0; font-size: 1.5rem; font-weight: bold; color: #000; }
-        code { background: #eee; padding: 2px 4px; border-radius: 3px; }
+        :root {
+            --bg: #09090b;
+            --panel: #18181b;
+            --border: #27272a;
+            --text-main: #e4e4e7;
+            --text-dim: #71717a;
+            --accent: #f59e0b; /* Amber */
+            --log-bg: #000000;
+            
+            /* Log Colors */
+            --l-info: #3b82f6;
+            --l-warn: #eab308;
+            --l-err: #ef4444;
+            --l-debug: #52525b;
+            --l-time: #059669;
+        }
+
+        body {
+            background-color: var(--bg);
+            color: var(--text-main);
+            font-family: 'JetBrains Mono', 'Consolas', monospace;
+            margin: 0;
+            padding: 20px;
+            height: 100vh;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        /* HEADER */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 15px;
+        }
+        h1 { margin: 0; font-size: 20px; letter-spacing: -1px; }
+        .badge { 
+            background: var(--accent); color: #000; 
+            padding: 2px 8px; border-radius: 4px; 
+            font-size: 12px; font-weight: bold; 
+        }
+
+        /* TOP GRID (Stats) */
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 15px;
+        }
+        .card {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            padding: 15px;
+            border-radius: 6px;
+        }
+        .card-label { color: var(--text-dim); font-size: 11px; text-transform: uppercase; margin-bottom: 5px; display: block;}
+        .card-value { font-size: 24px; font-weight: 600; }
+
+        /* MAIN CONTENT SPLIT */
+        .workspace {
+            display: flex;
+            flex: 1;
+            gap: 20px;
+            overflow: hidden; /* Important for scroll */
+        }
+
+        /* CONNECTIONS LIST (Left) */
+        .conn-panel {
+            flex: 1;
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            display: flex;
+            flex-direction: column;
+        }
+        .panel-head {
+            padding: 10px 15px;
+            border-bottom: 1px solid var(--border);
+            font-weight: bold;
+            font-size: 12px;
+            display: flex;
+            justify-content: space-between;
+        }
+        .conn-list {
+            overflow-y: auto;
+            flex: 1;
+            padding: 0;
+            margin: 0;
+            list-style: none;
+        }
+        .conn-row {
+            padding: 8px 15px;
+            border-bottom: 1px solid var(--border);
+            font-size: 12px;
+            display: grid;
+            grid-template-columns: 40px 1fr 80px;
+            gap: 10px;
+            align-items: center;
+        }
+        .conn-row:hover { background: #27272a; }
+        .method { color: var(--accent); font-weight: bold; }
+
+        /* LOG TERMINAL (Right) */
+        .terminal-panel {
+            flex: 2;
+            background: var(--log-bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            display: flex;
+            flex-direction: column;
+            font-size: 12px;
+        }
+        .terminal-window {
+            flex: 1;
+            overflow-y: auto;
+            padding: 15px;
+            white-space: pre-wrap;
+            font-family: 'Consolas', monospace;
+        }
+        
+        /* Log Syntax Highlighting */
+        .log-line { display: block; margin-bottom: 2px; line-height: 1.4; border-left: 2px solid transparent; padding-left: 5px;}
+        .log-line:hover { background: #111; border-left-color: var(--text-dim); }
+        
+        .ts { color: var(--l-time); opacity: 0.7; margin-right: 10px; }
+        .lvl-INFO { color: var(--l-info); font-weight: bold; }
+        .lvl-WARN { color: var(--l-warn); font-weight: bold; }
+        .lvl-ERROR { color: var(--l-err); font-weight: bold; }
+        .lvl-DEBUG { color: var(--l-debug); }
+        .msg { color: var(--text-main); }
+        
+        /* Specific highlight for your keywords */
+        .kwd-conn { color: #a5f3fc; } /* Connection IDs */
+        .kwd-host { color: #fcd34d; } /* Hostnames */
+
+        /* SCROLLBAR */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: var(--bg); }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+
     </style>
 </head>
 <body>
 
-    <div class="container">
-        <h1>Deadlight Meshtastic Proxy</h1>
-
-        <h2>Status</h2>
-        <div id="status-grid" class="status-grid">
-            <!-- Status cards will be generated here by JavaScript -->
-            <p>Loading...</p>
+    <header>
+        <div style="display:flex; align-items:center; gap:15px;">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 2a10 10 0 1 0 10 10 4 4 0 0 1-5-5 4 4 0 0 1-5-5 10 10 0 0 0-10 0 4 4 0 0 1-5-5 4 4 0 0 1-5-5z"></path>
+                <path d="M12 22v-6"></path>
+                <path d="M12 8V2"></path>
+                <path d="M4.93 4.93l4.24 4.24"></path>
+                <path d="M14.83 14.83l4.24 4.24"></path>
+                <path d="M14.83 9.17l4.24-4.24"></path>
+                <path d="M4.93 19.07l4.24-4.24"></path>
+            </svg>
+            <h1>DEADLIGHT <span style="opacity:0.5">//</span> PROXY</h1>
         </div>
+        <div>
+            <span class="badge">v1.0.0</span>
+            <span class="badge" style="background:#333; color:#fff; margin-left:5px;">MESH: ONLINE</span>
+        </div>
+    </header>
 
-        <h2>Connections (<span id="active-connections-count">0</span>)</h2>
-        <table>
-            <thead>
-                <tr>
-                    <th>#</th>
-                    <th>Remote</th>
-                    <th>Protocol</th>
-                    <th>TX</th>
-                    <th>RX</th>
-                </tr>
-            </thead>
-            <tbody id="connections-table-body">
-                <!-- Connection rows will be generated here by JavaScript -->
-            </tbody>
-        </table>
+    <!-- METRICS -->
+    <div class="grid">
+        <div class="card">
+            <span class="card-label">Active Connections</span>
+            <span class="card-value" id="val-active">--</span>
+        </div>
+        <div class="card">
+            <span class="card-label">Total Handled</span>
+            <span class="card-value" id="val-total">--</span>
+        </div>
+        <div class="card">
+            <span class="card-label">Data Transferred</span>
+            <span class="card-value" id="val-bytes">-- KB</span>
+        </div>
+        <div class="card">
+            <span class="card-label">Uptime</span>
+            <span class="card-value" id="val-uptime">--</span>
+        </div>
     </div>
 
-    <script>
-        // Helper function to format bytes
-        function formatBytes(bytes, decimals = 2) {
-            if (bytes === 0) return '0 B';
-            const k = 1024;
-            const dm = decimals < 0 ? 0 : decimals;
-            const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-            const i = Math.floor(Math.log(bytes) / Math.log(k));
-            return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+    <div class="workspace">
+        <!-- LEFT: ACTIVE CONNECTIONS -->
+        <div class="conn-panel">
+            <div class="panel-head">
+                <span>TUNNELS</span>
+                <span style="font-size: 10px; opacity: 0.7">LIVE</span>
+            </div>
+            <ul class="conn-list" id="conn-list">
+                <!-- Javascript will populate this -->
+                <li class="conn-row" style="text-align:center; display:block; opacity:0.5; padding:20px;">
+                    Waiting for telemetry...
+                </li>
+            </ul>
+        </div>
+
+        <!-- RIGHT: LIVE LOGS -->
+        <div class="terminal-panel">
+            <div class="panel-head">
+                <span>SYSTEM LOG</span>
+                <div style="display:flex; gap:10px;">
+                    <label style="font-size:10px;"><input type="checkbox" checked id="auto-scroll"> AUTO-SCROLL</label>
+                </div>
+            </div>
+            <div class="terminal-window" id="terminal">
+                <!-- Javascript will populate this -->
+            </div>
+        </div>
+    </div>
+
+<script>
+    // == CONFIG ==
+    const API_BASE = 'http://127.0.0.1:8080'; 
+    const API_STATS = API_BASE + '/api/metrics'; 
+    const API_LOGS  = API_BASE + '/api/logs';
+
+    // == PARSERS ==
+    function formatBytes(bytes) {
+        if (bytes === 0) return '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
+    // Colors the log line based on content
+    function renderLogLine(line) {
+        // Regex: Date Time [LEVEL] Message
+        const regex = /^(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})\s$$\s*(\w+)\s*$$\s(.*)/;
+        const match = line.match(regex);
+
+        if (!match) {
+            return `<div class="log-line" style="color:#aaa;"><span class="msg">${line}</span></div>`;
         }
 
-        // Main function to update the dashboard
-        async function updateDashboard() {
-            try {
-                // Fetch status and connections data in parallel
-                const [statusRes, connectionsRes] = await Promise.all([
-                    fetch('/api/status'),
-                    fetch('/api/connections')
-                ]);
+        const [_, ts, level, msg] = match;
+        
+        // Map level to color
+        let levelColor = '#999';  // Default gray
+        switch(level.trim()) {
+            case 'INFO':   levelColor = '#3b82f6'; break;  // Blue
+            case 'WARN':   levelColor = '#eab308'; break;  // Yellow
+            case 'ERROR':  levelColor = '#ef4444'; break;  // Red
+            case 'DEBUG':  levelColor = '#52525b'; break;  // Dark Gray
+        }
 
-                if (!statusRes.ok || !connectionsRes.ok) {
-                    throw new Error('Failed to fetch data from API');
-                }
+        // Highlight keywords in message
+        let richMsg = msg
+            .replace(/(Connection \d+)/g, '<span style="color:#67e8f9; font-weight:bold;">\$1</span>') // Cyan
+            .replace(/([a-zA-Z0-9.-]+\.com:\d+)/g, '<span style="color:#fcd34d; font-weight:bold;">\$1</span>') // Yellow
+            .replace(/(direct:\/\/|https:\/\/)/g, '<span style="color:#86efac;">\$1</span>') // Green
+            .replace(/(Pool\s\w+|TLS|SSL|CONNECT)/g, '<span style="color:#c084fc;">\$1</span>'); // Purple highlights
 
-                const status = await statusRes.json();
-                const connections = await connectionsRes.json();
+        return `
+            <div class="log-line" style="display:flex; gap:10px; align-items:baseline;">
+                <span style="color:#52525b; opacity:0.7; min-width:120px;">${ts}</span>
+                <span style="color:${levelColor}; font-weight:bold; min-width:60px; text-align:right;">[${level}]</span>
+                <span style="color:#aaa; flex:1;">${richMsg}</span>
+            </div>
+        `;
+    }
 
-                // === Update Status Grid ===
-                const statusGrid = document.getElementById('status-grid');
-                const uptimeMinutes = (status.uptime_seconds / 60).toFixed(2);
-                statusGrid.innerHTML = `
-                    <div class="status-card"><h3>Version</h3><p>${status.version}</p></div>
-                    <div class="status-card"><h3>Uptime</h3><p>${uptimeMinutes} min</p></div>
-                    <div class="status-card"><h3>Connections (Active/Total)</h3><p>${status.connections_active} / ${status.connections_total}</p></div>
-                    <div class="status-card"><h3>Data Transferred</h3><p>${status.bytes_transferred_formatted}</p></div>
-                    <div class="status-card"><h3>Plugins</h3><p>${status.plugins.join(', ')}</p></div>
-                `;
+    // == UPDATE LOOPS ==
 
-                // === Update Connections Table ===
-                document.getElementById('active-connections-count').textContent = connections.length;
-                const connectionsTableBody = document.getElementById('connections-table-body');
-                connectionsTableBody.innerHTML = ''; // Clear existing rows
+    // 1. Fetch Stats
+    async function updateStats() {
+        // Mocking data based on your screenshot until you connect real API
+        // Replace this object with: const data = await (await fetch(API_STATS)).json();
+        const data = {
+            connections: { active: 2, total: 112 },
+            bytes: 78000,
+            uptime: "2.18 min",
+            active_tunnels: [
+                { id: 110, host: "quotes-gw.webullfintech.com:443", method: "CONNECT", tx: 569 }
+            ]
+        };
 
-                if (connections.length === 0) {
-                    connectionsTableBody.innerHTML = '<tr><td colspan="5" style="text-align:center;">No active connections.</td></tr>';
-                } else {
-                    connections.forEach(conn => {
-                        const row = document.createElement('tr');
-                        row.innerHTML = `
-                            <td>${conn.id}</td>
-                            <td>${conn.remote}</td>
-                            <td>${conn.proto}</td>
-                            <td>${formatBytes(conn.tx)}</td>
-                            <td>${formatBytes(conn.rx)}</td>
-                        `;
-                        connectionsTableBody.appendChild(row);
-                    });
-                }
+        // DOM Updates
+        document.getElementById('val-active').innerText = data.connections.active + " / " + data.connections.total;
+        document.getElementById('val-total').innerText = data.connections.total;
+        document.getElementById('val-bytes').innerText = formatBytes(data.bytes);
+        document.getElementById('val-uptime').innerText = data.uptime;
 
-            } catch (error) {
-                console.error('Error updating dashboard:', error);
-                document.getElementById('status-grid').innerHTML = `<p style="color:red;">Error loading data.</p>`;
+        // Render Connections list
+        const list = document.getElementById('conn-list');
+        list.innerHTML = data.active_tunnels.map(t => `
+            <li class="conn-row">
+                <span style="color:#555">#${t.id}</span>
+                <span>${t.host}</span>
+                <span class="method">${t.method}</span>
+            </li>
+        `).join('');
+    }
+
+    // 2. Fetch Logs
+    // We keep track of the last log we saw to avoid duplicates if API sends full buffer
+    let lastLogHash = ""; 
+
+    async function updateLogs() {
+        try {
+            // For now, let's simulate the API response based on your text
+            // In production: const logs = await (await fetch(API_LOGS)).json();
+            
+            // SIMULATED NEW LOGS FOR DEMO
+            const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+            const mockLogs = [
+                `${now} [INFO ] deadlight: New connection from 127.0.0.1:48198`,
+                `${now} [DEBUG] deadlight: Worker thread processing connection 112`,
+                `${now} [INFO ] deadlight: Connection 112: CONNECT request to api.github.com:443`,
+                `${now} [DEBUG] pxbackend: px_manager_get_proxies_sync: Proxy[0] = direct://`
+            ];
+            
+            // Randomly add a log to simulate live stream
+            const logs = Math.random() > 0.5 ? [mockLogs[Math.floor(Math.random()*mockLogs.length)]] : [];
+
+            const term = document.getElementById('terminal');
+            
+            logs.forEach(line => {
+                const el = document.createElement('div');
+                el.innerHTML = renderLogLine(line);
+                term.appendChild(el);
+            });
+
+            // Auto Scroll
+            if(document.getElementById('auto-scroll').checked) {
+                term.scrollTop = term.scrollHeight;
             }
-        }
+            
+            // Limit DOM elements (prevent browser crash on long run)
+            if(term.childElementCount > 500) {
+                term.removeChild(term.firstChild);
+            }
 
-        // Initial call and set interval to refresh every 2 seconds
-        updateDashboard();
-        setInterval(updateDashboard, 2000);
-    </script>
+        } catch(e) { console.log("Log fetch error", e); }
+    }
 
+    // Start Loops
+    setInterval(updateStats, 1000);
+    setInterval(updateLogs, 500); // Poll logs faster
+    
+    // Initial paint
+    updateStats();
+</script>
 </body>
 </html>

@@ -129,3 +129,34 @@ gboolean deadlight_parse_host_port(const gchar *host_port, gchar **host, guint16
     // The function is successful if we managed to allocate a non-empty host string.
     return (*host != NULL && strlen(*host) > 0);
 }
+
+#include <openssl/hmac.h>
+#include <openssl/evp.h>
+
+// Add this function
+gboolean validate_hmac_bytes(const gchar *auth_header, const guint8 *body_data, gsize body_len, const gchar *secret) {
+    if (!auth_header || !secret) return FALSE;
+
+    // Expected format: "sha256=<hex_hash>"
+    if (!g_str_has_prefix(auth_header, "sha256=")) return FALSE;
+    const gchar *provided_hash = auth_header + 7;
+
+    unsigned char *digest;
+    unsigned int digest_len;
+
+    digest = HMAC(EVP_sha256(), secret, strlen(secret), body_data, body_len, NULL, &digest_len);
+    
+    if (!digest) return FALSE;
+
+    // Convert to hex string
+    GString *calculated_hash = g_string_new(NULL);
+    for (unsigned int i = 0; i < digest_len; i++) {
+        g_string_append_printf(calculated_hash, "%02x", digest[i]);
+    }
+
+    // Constant time comparison (to prevent timing attacks)
+    gboolean match = (CRYPTO_memcmp(calculated_hash->str, provided_hash, digest_len * 2) == 0);
+
+    g_string_free(calculated_hash, TRUE);
+    return match;
+}
