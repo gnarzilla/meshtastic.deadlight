@@ -2,13 +2,14 @@
 
 **Internet-over-LoRa: A practical bridge between Meshtastic mesh networks and the Internet**
 
-[Why This Exists](#why-this-exists) · [Getting Started](#getting-started) · [Hardware](#hardware) · [Usage](#usage) · [Configuration](#configuration) · [How It Works](#how-it-works) · [Real-World Use Cases](#real-world-use-cases) · [Performance](#performance) · [Roadmap](#roadmap)
+[![Meshtastic](https://meshtastic.deadlight.boo/favicon.ico)](https://meshtastic.deadlight.boo) [Project/Community Blog](https://meshtastic.deadlight.boo) · [Why This Exists](#why-this-exists) · [Getting Started](#getting-started) · [Hardware](#hardware) · [Usage](#usage) · [Configuration](#configuration) · [How It Works](#how-it-works) · [Real-World Use Cases](#real-world-use-cases) · [Performance](#performance) · [Roadmap](#roadmap) · [License](#license)
 
 ![Deadlight Meshtastic Proxy (no lora)](assets/output.gif)
 
+
 ## Overview
 
-Deadlight Meshtastic Proxy transforms LoRa mesh networks into practical Internet gateways. Built on the [Deadlight Proxy](https://github.com/gnarzilla/proxy.deadlight) foundation, it adds transparent mesh networking capabilities that let any device on a Meshtastic mesh access standard Internet protocols—HTTP/HTTPS, email, DNS, and more—as if they had normal connectivity.
+Deadlight Meshtastic Proxy transforms LoRa mesh networks into practical Internet gateways. Built on the [Deadlight Proxy](https://github.com/gnarzilla/proxy.deadlight) foundation, it adds transparent mesh networking capabilities that let any device on a Meshtastic mesh access standard Internet protocols including HTTP/HTTPS, email, DNS, FTP, as if they had normal connectivity.
 
 **What makes this different from other mesh solutions:**
 - Standard protocols work unchanged (browse websites, send email, use apps)
