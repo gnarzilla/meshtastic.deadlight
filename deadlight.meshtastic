@@ -57,9 +57,9 @@ protocol_detection_timeout=5
 
 [network]
 #Upstream connection timeout
-upstream_timeout=30
+upstream_timeout=300
 #Keep-alive timeout
-keepalive_timeout=300
+keepalive_timeout=1200
 #DNS resolution timeout
 dns_timeout=5
 #Custom DNS servers (comma-separated)
@@ -73,9 +73,9 @@ tcp_keepalive=true
 #Max connections per upstream host
 connection_pool_size=25
 #Idle connection timeout (seconds)
-connection_pool_timeout=300
+connection_pool_timeout=600
 #Total pool size across all hosts
-connection_pool_max_total=500
+connection_pool_max_total=1500
 #Pool eviction policy: lru, fifo, none
 connection_pool_eviction_policy=lru
 #Connection health check interval (seconds)
