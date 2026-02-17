@@ -6,7 +6,7 @@
 
 ![Deadlight-Mesh Web UI](src/assets/Deadlight-Mesh-webUI.gif)
 
-[Live Demo Dashboard(if active)](![Deadlight Meshtastic Proxy (no lora)](src/assets/output.gif))
+[Live Demo Dashboard(if active)](http://emilyssidepc-1.mulley-mooneye.ts.net:8081/)
 
 ## Overview
 
