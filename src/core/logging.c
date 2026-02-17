@@ -114,7 +114,7 @@ void deadlight_log_handler(const gchar *log_domain, GLogLevelFlags log_level,
 }
 
 /**
- * NEW: Export buffer as JSON array
+ * Export buffer as JSON array
  */
 gchar *deadlight_logging_get_buffered_json(void) {
     GString *json = g_string_new("[");

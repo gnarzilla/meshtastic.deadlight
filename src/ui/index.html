@@ -3,23 +3,28 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DEADLIGHT // CONSOLE</title>
+    <title>DEADLIGHT // MESH</title>
+    
+    <link rel="icon" type="image/png" href="favicon.png">
+    <link rel="shortcut icon" type="image/x-icon" href="favicon.ico">
+    
     <style>
         :root {
-            --bg: #09090b;
-            --panel: #18181b;
-            --border: #27272a;
-            --text-main: #e4e4e7;
-            --text-dim: #71717a;
-            --accent: #f59e0b; /* Amber */
-            --log-bg: #000000;
-            
-            /* Log Colors */
-            --l-info: #3b82f6;
-            --l-warn: #eab308;
-            --l-err: #ef4444;
-            --l-debug: #52525b;
-            --l-time: #059669;
+            --bg: #080b09;
+            --panel: #0f1510;
+            --border: #1a2e1d;
+            --text-main: #d4e8d0;
+            --text-dim: #4d7a52;
+            --accent: #22c55e;
+            --accent-dim: #15803d;
+            --log-bg: #050805;
+
+            /* Log Colors — shifted green-ward to match palette */
+            --l-info: #34d399;
+            --l-warn: #fbbf24;
+            --l-err:  #f87171;
+            --l-debug: #374a39;
+            --l-time: #4ade80;
         }
 
         body {
@@ -33,6 +38,14 @@
             display: flex;
             flex-direction: column;
             gap: 20px;
+            /* Subtle scanline texture to evoke RF/radio feel */
+            background-image: repeating-linear-gradient(
+                0deg,
+                transparent,
+                transparent 2px,
+                rgba(34, 197, 94, 0.015) 2px,
+                rgba(34, 197, 94, 0.015) 4px
+            );
         }
 
         /* HEADER */
@@ -45,12 +58,15 @@
         }
         h1 { margin: 0; font-size: 20px; letter-spacing: -1px; }
         .badge { 
-            background: var(--accent); color: #000; 
-            padding: 2px 8px; border-radius: 4px; 
-            font-size: 12px; font-weight: bold; 
+            background: var(--accent);
+            color: #000; 
+            padding: 2px 8px; 
+            border-radius: 4px; 
+            font-size: 12px; 
+            font-weight: bold;
         }
 
-        /* TOP GRID (Stats) */
+        /* STATS GRID */
         .grid {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
@@ -61,19 +77,36 @@
             border: 1px solid var(--border);
             padding: 15px;
             border-radius: 6px;
+            position: relative;
+            overflow: hidden;
         }
-        .card-label { color: var(--text-dim); font-size: 11px; text-transform: uppercase; margin-bottom: 5px; display: block;}
-        .card-value { font-size: 24px; font-weight: 600; }
+        /* Subtle left accent bar on cards */
+        .card::before {
+            content: '';
+            position: absolute;
+            left: 0; top: 0; bottom: 0;
+            width: 2px;
+            background: var(--accent-dim);
+        }
+        .card-label { 
+            color: var(--text-dim); 
+            font-size: 11px; 
+            text-transform: uppercase; 
+            letter-spacing: 0.05em;
+            margin-bottom: 5px; 
+            display: block;
+        }
+        .card-value { font-size: 24px; font-weight: 600; color: var(--accent); }
 
-        /* MAIN CONTENT SPLIT */
+        /* WORKSPACE */
         .workspace {
             display: flex;
             flex: 1;
             gap: 20px;
-            overflow: hidden; /* Important for scroll */
+            overflow: hidden;
         }
 
-        /* CONNECTIONS LIST (Left) */
+        /* MESH LINKS PANEL (Left) */
         .conn-panel {
             flex: 1;
             background: var(--panel);
@@ -89,7 +122,12 @@
             font-size: 12px;
             display: flex;
             justify-content: space-between;
+            align-items: center;
+            color: var(--text-dim);
+            letter-spacing: 0.08em;
         }
+        .panel-head span:first-child { color: var(--text-main); }
+
         .conn-list {
             overflow-y: auto;
             flex: 1;
@@ -102,12 +140,13 @@
             border-bottom: 1px solid var(--border);
             font-size: 12px;
             display: grid;
-            grid-template-columns: 40px 1fr 80px;
+            grid-template-columns: 40px 1fr 90px;
             gap: 10px;
             align-items: center;
         }
-        .conn-row:hover { background: #27272a; }
-        .method { color: var(--accent); font-weight: bold; }
+        .conn-row:hover { background: #0d1a0f; }
+        .conn-row .proto-tag { color: var(--text-dim); font-size: 10px; }
+        .active-count { color: var(--accent); font-weight: bold; text-align: right; }
 
         /* LOG TERMINAL (Right) */
         .terminal-panel {
@@ -127,20 +166,21 @@
             font-family: 'Consolas', monospace;
         }
         
-        /* Log Syntax Highlighting */
-        .log-line { display: block; margin-bottom: 2px; line-height: 1.4; border-left: 2px solid transparent; padding-left: 5px;}
-        .log-line:hover { background: #111; border-left-color: var(--text-dim); }
+        .log-line { 
+            display: block; 
+            margin-bottom: 2px; 
+            line-height: 1.4; 
+            border-left: 2px solid transparent; 
+            padding-left: 5px;
+        }
+        .log-line:hover { background: #0a110a; border-left-color: var(--text-dim); }
         
-        .ts { color: var(--l-time); opacity: 0.7; margin-right: 10px; }
-        .lvl-INFO { color: var(--l-info); font-weight: bold; }
-        .lvl-WARN { color: var(--l-warn); font-weight: bold; }
-        .lvl-ERROR { color: var(--l-err); font-weight: bold; }
+        .ts  { color: var(--l-time); opacity: 0.6; margin-right: 10px; }
+        .lvl-INFO  { color: var(--l-info);  font-weight: bold; }
+        .lvl-WARN  { color: var(--l-warn);  font-weight: bold; }
+        .lvl-ERROR { color: var(--l-err);   font-weight: bold; }
         .lvl-DEBUG { color: var(--l-debug); }
         .msg { color: var(--text-main); }
-        
-        /* Specific highlight for your keywords */
-        .kwd-conn { color: #a5f3fc; } /* Connection IDs */
-        .kwd-host { color: #fcd34d; } /* Hostnames */
 
         /* SCROLLBAR */
         ::-webkit-scrollbar { width: 8px; }
@@ -148,85 +188,152 @@
         ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
 
+        /* STATUS INDICATORS */
+        .status-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 6px;
+            animation: pulse 2s infinite;
+        }
+        .status-online     { background: var(--accent); }
+        .status-offline    { background: #ef4444; animation: none; }
+        .status-connecting { background: #fbbf24; }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50%       { opacity: 0.35; }
+        }
+
+        .stream-mode {
+            font-size: 10px;
+            color: var(--text-dim);
+            margin-left: 5px;
+            letter-spacing: 0.05em;
+        }
+
+        /* Antenna icon pulse ring — purely decorative */
+        .icon-wrap {
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 24px;
+            height: 24px;
+        }
+        .icon-wrap::after {
+            content: '';
+            position: absolute;
+            width: 36px; height: 36px;
+            border-radius: 50%;
+            border: 1px solid var(--accent);
+            opacity: 0;
+            animation: sonar 3s ease-out infinite;
+        }
+        @keyframes sonar {
+            0%   { transform: scale(0.4); opacity: 0.6; }
+            100% { transform: scale(1.4); opacity: 0; }
+        }
     </style>
 </head>
 <body>
 
     <header>
         <div style="display:flex; align-items:center; gap:15px;">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M12 2a10 10 0 1 0 10 10 4 4 0 0 1-5-5 4 4 0 0 1-5-5 10 10 0 0 0-10 0 4 4 0 0 1-5-5 4 4 0 0 1-5-5z"></path>
-                <path d="M12 22v-6"></path>
-                <path d="M12 8V2"></path>
-                <path d="M4.93 4.93l4.24 4.24"></path>
-                <path d="M14.83 14.83l4.24 4.24"></path>
-                <path d="M14.83 9.17l4.24-4.24"></path>
-                <path d="M4.93 19.07l4.24-4.24"></path>
-            </svg>
-            <h1>DEADLIGHT <span style="opacity:0.5">//</span> PROXY</h1>
+            <!-- Antenna / broadcast icon -->
+            <div class="icon-wrap">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" 
+                     stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                     style="color: var(--accent)">
+                    <!-- vertical mast -->
+                    <line x1="12" y1="24" x2="12" y2="10"/>
+                    <!-- signal arcs -->
+                    <path d="M8.5 6.5 A5 5 0 0 1 15.5 6.5"/>
+                    <path d="M5.5 3.5 A9 9 0 0 1 18.5 3.5"/>
+                    <!-- base dot -->
+                    <circle cx="12" cy="10" r="1.2" fill="currentColor"/>
+                </svg>
+            </div>
+            <h1>DEADLIGHT <span style="opacity:0.4">//</span> MESH</h1>
+            <span class="stream-mode" id="mode-indicator">⚡ REALTIME</span>
         </div>
-        <div>
+        <div style="display:flex; gap:8px; align-items:center;">
             <span class="badge">v1.0.0</span>
-            <span class="badge" style="background:#333; color:#fff; margin-left:5px;">MESH: ONLINE</span>
+            <span class="badge" id="api-status-badge" 
+                  style="background:#1a2e1d; color: var(--text-dim); border: 1px solid var(--border);">
+                <span class="status-indicator status-connecting"></span>CONNECTING...
+            </span>
         </div>
     </header>
 
     <!-- METRICS -->
     <div class="grid">
         <div class="card">
-            <span class="card-label">Active Connections</span>
+            <span class="card-label">Active Links</span>
             <span class="card-value" id="val-active">--</span>
         </div>
         <div class="card">
-            <span class="card-label">Total Handled</span>
+            <span class="card-label">Packets Relayed</span>
             <span class="card-value" id="val-total">--</span>
         </div>
         <div class="card">
-            <span class="card-label">Data Transferred</span>
-            <span class="card-value" id="val-bytes">-- KB</span>
+            <span class="card-label">Bytes Bridged</span>
+            <span class="card-value" id="val-bytes">--</span>
         </div>
         <div class="card">
-            <span class="card-label">Uptime</span>
+            <span class="card-label">Gateway Uptime</span>
             <span class="card-value" id="val-uptime">--</span>
         </div>
     </div>
 
     <div class="workspace">
-        <!-- LEFT: ACTIVE CONNECTIONS -->
+        <!-- LEFT: MESH LINKS -->
         <div class="conn-panel">
             <div class="panel-head">
-                <span>TUNNELS</span>
-                <span style="font-size: 10px; opacity: 0.7">LIVE</span>
+                <span>MESH LINKS</span>
+                <span style="font-size: 10px;">LIVE</span>
             </div>
             <ul class="conn-list" id="conn-list">
-                <!-- Javascript will populate this -->
-                <li class="conn-row" style="text-align:center; display:block; opacity:0.5; padding:20px;">
-                    Waiting for telemetry...
+                <li class="conn-row" style="text-align:center; display:block; opacity:0.4; padding:20px;">
+                    Awaiting mesh telemetry...
                 </li>
             </ul>
         </div>
 
-        <!-- RIGHT: LIVE LOGS -->
+        <!-- RIGHT: GATEWAY LOG -->
         <div class="terminal-panel">
             <div class="panel-head">
-                <span>SYSTEM LOG</span>
-                <div style="display:flex; gap:10px;">
-                    <label style="font-size:10px;"><input type="checkbox" checked id="auto-scroll"> AUTO-SCROLL</label>
+                <span>GATEWAY LOG</span>
+                <div style="display:flex; gap:10px; align-items:center;">
+                    <label style="font-size:10px; cursor:pointer;">
+                        <input type="checkbox" checked id="auto-scroll"> AUTO-SCROLL
+                    </label>
                 </div>
             </div>
-            <div class="terminal-window" id="terminal">
-                <!-- Javascript will populate this -->
-            </div>
+            <div class="terminal-window" id="terminal"></div>
         </div>
     </div>
 
 <script>
-    // == CONFIG ==
-    const API_BASE = 'http://127.0.0.1:8080'; 
-    const API_STATS = API_BASE + '/api/metrics'; 
-    const API_LOGS  = API_BASE + '/api/logs';
+    // ═══════════════════════════════════════════════════════════════════════
+    // CONFIG
+    // ═══════════════════════════════════════════════════════════════════════
+    const API_BASE    = 'http://127.0.0.1:8080';
+    const SSE_ENDPOINT = API_BASE + '/api/stream';
 
-    // == PARSERS ==
+    // ═══════════════════════════════════════════════════════════════════════
+    // STATE
+    // ═══════════════════════════════════════════════════════════════════════
+    let lastLogLine       = '';
+    let eventSource       = null;
+    let reconnectAttempts = 0;
+    const MAX_RECONNECT_DELAY = 30000;
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // UTILS
+    // ═══════════════════════════════════════════════════════════════════════
+
     function formatBytes(bytes) {
         if (bytes === 0) return '0 B';
         const k = 1024;
@@ -235,123 +342,205 @@
         return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
     }
 
-    // Colors the log line based on content
+    function formatUptime(seconds) {
+        if (!seconds) return '0s';
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        const s = Math.floor(seconds % 60);
+        if (h > 0) return `${h}h ${m}m ${s}s`;
+        if (m > 0) return `${m}m ${s}s`;
+        return `${s}s`;
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
     function renderLogLine(line) {
-        // Regex: Date Time [LEVEL] Message
-        const regex = /^(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})\s$$\s*(\w+)\s*$$\s(.*)/;
+        const regex = /^(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})\s\[\s*([A-Z]+)\s*\]\s(.*)/;
         const match = line.match(regex);
 
         if (!match) {
-            return `<div class="log-line" style="color:#aaa;"><span class="msg">${line}</span></div>`;
+            return `<div class="log-line"><span class="msg">${escapeHtml(line)}</span></div>`;
         }
 
         const [_, ts, level, msg] = match;
-        
-        // Map level to color
-        let levelColor = '#999';  // Default gray
-        switch(level.trim()) {
-            case 'INFO':   levelColor = '#3b82f6'; break;  // Blue
-            case 'WARN':   levelColor = '#eab308'; break;  // Yellow
-            case 'ERROR':  levelColor = '#ef4444'; break;  // Red
-            case 'DEBUG':  levelColor = '#52525b'; break;  // Dark Gray
-        }
 
-        // Highlight keywords in message
-        let richMsg = msg
-            .replace(/(Connection \d+)/g, '<span style="color:#67e8f9; font-weight:bold;">\$1</span>') // Cyan
-            .replace(/([a-zA-Z0-9.-]+\.com:\d+)/g, '<span style="color:#fcd34d; font-weight:bold;">\$1</span>') // Yellow
-            .replace(/(direct:\/\/|https:\/\/)/g, '<span style="color:#86efac;">\$1</span>') // Green
-            .replace(/(Pool\s\w+|TLS|SSL|CONNECT)/g, '<span style="color:#c084fc;">\$1</span>'); // Purple highlights
+        // Keyword highlighting — mesh-flavoured colours
+        let richMsg = escapeHtml(msg)
+            .replace(/(Connection \d+)/g,              '<span style="color:#6ee7b7">$1</span>')
+            .replace(/([a-zA-Z0-9.-]+\.com:\d+)/g,    '<span style="color:#fcd34d">$1</span>')
+            .replace(/(direct:\/\/)/g,                 '<span style="color:#86efac">$1</span>')
+            .replace(/(LoRa|mesh|fragment|relay)/gi,   '<span style="color:#4ade80">$1</span>');
 
         return `
-            <div class="log-line" style="display:flex; gap:10px; align-items:baseline;">
-                <span style="color:#52525b; opacity:0.7; min-width:120px;">${ts}</span>
-                <span style="color:${levelColor}; font-weight:bold; min-width:60px; text-align:right;">[${level}]</span>
-                <span style="color:#aaa; flex:1;">${richMsg}</span>
-            </div>
-        `;
+            <div class="log-line">
+                <span class="ts">${ts}</span>
+                <span class="lvl-${level.trim()}">[${level}]</span>
+                <span class="msg" style="margin-left:10px">${richMsg}</span>
+            </div>`;
     }
 
-    // == UPDATE LOOPS ==
+    // ═══════════════════════════════════════════════════════════════════════
+    // STATUS BADGE
+    // ═══════════════════════════════════════════════════════════════════════
 
-    // 1. Fetch Stats
-    async function updateStats() {
-        // Mocking data based on your screenshot until you connect real API
-        // Replace this object with: const data = await (await fetch(API_STATS)).json();
-        const data = {
-            connections: { active: 2, total: 112 },
-            bytes: 78000,
-            uptime: "2.18 min",
-            active_tunnels: [
-                { id: 110, host: "quotes-gw.webullfintech.com:443", method: "CONNECT", tx: 569 }
-            ]
-        };
+    function updateApiStatus(status) {
+        const badge = document.getElementById('api-status-badge');
 
-        // DOM Updates
-        document.getElementById('val-active').innerText = data.connections.active + " / " + data.connections.total;
-        document.getElementById('val-total').innerText = data.connections.total;
-        document.getElementById('val-bytes').innerText = formatBytes(data.bytes);
-        document.getElementById('val-uptime').innerText = data.uptime;
+        if (status === 'online') {
+            badge.innerHTML = '<span class="status-indicator status-online"></span>STREAMING';
+            badge.style.background = 'var(--accent)';
+            badge.style.color = '#000';
+            badge.style.border = 'none';
+            reconnectAttempts = 0;
+        } else if (status === 'connecting') {
+            badge.innerHTML = '<span class="status-indicator status-connecting"></span>CONNECTING...';
+            badge.style.background = '#1a2e1d';
+            badge.style.color = '#fbbf24';
+            badge.style.border = '1px solid var(--border)';
+        } else {
+            const retryIn = Math.min(2 ** reconnectAttempts, 30);
+            badge.innerHTML = `<span class="status-indicator status-offline"></span>OFFLINE (retry ${retryIn}s)`;
+            badge.style.background = '#1a0a0a';
+            badge.style.color = '#f87171';
+            badge.style.border = '1px solid #3a1a1a';
+        }
+    }
 
-        // Render Connections list
+    // ═══════════════════════════════════════════════════════════════════════
+    // DASHBOARD UPDATE
+    // ═══════════════════════════════════════════════════════════════════════
+
+    function updateDashboard(data) {
+        const metrics = data.metrics;
+
+        document.getElementById('val-active').innerText =
+            metrics.active_connections + ' / ' + metrics.total_connections;
+        document.getElementById('val-total').innerText  = metrics.total_connections;
+        document.getElementById('val-bytes').innerText  = formatBytes(metrics.bytes_transferred);
+        document.getElementById('val-uptime').innerText = formatUptime(metrics.uptime);
+
+        // Mesh links — protocol breakdown
         const list = document.getElementById('conn-list');
-        list.innerHTML = data.active_tunnels.map(t => `
-            <li class="conn-row">
-                <span style="color:#555">#${t.id}</span>
-                <span>${t.host}</span>
-                <span class="method">${t.method}</span>
-            </li>
-        `).join('');
-    }
+        let html = '';
+        let hasActive = false;
 
-    // 2. Fetch Logs
-    // We keep track of the last log we saw to avoid duplicates if API sends full buffer
-    let lastLogHash = ""; 
+        for (const [proto, stats] of Object.entries(metrics.protocols)) {
+            if (stats.active > 0) {
+                hasActive = true;
+                html += `
+                <li class="conn-row">
+                    <span class="proto-tag">LNK</span>
+                    <span style="font-weight:bold">${proto}</span>
+                    <span class="active-count">${stats.active} ACTIVE</span>
+                </li>`;
+            }
+        }
 
-    async function updateLogs() {
-        try {
-            // For now, let's simulate the API response based on your text
-            // In production: const logs = await (await fetch(API_LOGS)).json();
-            
-            // SIMULATED NEW LOGS FOR DEMO
-            const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
-            const mockLogs = [
-                `${now} [INFO ] deadlight: New connection from 127.0.0.1:48198`,
-                `${now} [DEBUG] deadlight: Worker thread processing connection 112`,
-                `${now} [INFO ] deadlight: Connection 112: CONNECT request to api.github.com:443`,
-                `${now} [DEBUG] pxbackend: px_manager_get_proxies_sync: Proxy[0] = direct://`
-            ];
-            
-            // Randomly add a log to simulate live stream
-            const logs = Math.random() > 0.5 ? [mockLogs[Math.floor(Math.random()*mockLogs.length)]] : [];
+        list.innerHTML = hasActive
+            ? html
+            : '<li class="conn-row" style="opacity:0.4; justify-content:center; display:block; padding:20px; text-align:center;">No active links</li>';
 
-            const term = document.getElementById('terminal');
-            
-            logs.forEach(line => {
-                const el = document.createElement('div');
-                el.innerHTML = renderLogLine(line);
-                term.appendChild(el);
+        // Logs — incremental append
+        const logs = data.logs || [];
+        const term = document.getElementById('terminal');
+
+        let newLogs = [];
+        if (lastLogLine === '') {
+            newLogs = logs;
+        } else {
+            const idx = logs.indexOf(lastLogLine);
+            newLogs = idx !== -1 ? logs.slice(idx + 1) : logs;
+        }
+
+        if (newLogs.length > 0) {
+            lastLogLine = logs[logs.length - 1];
+
+            newLogs.forEach(line => {
+                const div = document.createElement('div');
+                div.innerHTML = renderLogLine(line);
+                term.appendChild(div);
             });
 
-            // Auto Scroll
-            if(document.getElementById('auto-scroll').checked) {
+            if (document.getElementById('auto-scroll').checked) {
                 term.scrollTop = term.scrollHeight;
             }
-            
-            // Limit DOM elements (prevent browser crash on long run)
-            if(term.childElementCount > 500) {
+
+            while (term.childElementCount > 500) {
                 term.removeChild(term.firstChild);
             }
-
-        } catch(e) { console.log("Log fetch error", e); }
+        }
     }
 
-    // Start Loops
-    setInterval(updateStats, 1000);
-    setInterval(updateLogs, 500); // Poll logs faster
-    
-    // Initial paint
-    updateStats();
+    // ═══════════════════════════════════════════════════════════════════════
+    // SSE
+    // ═══════════════════════════════════════════════════════════════════════
+
+    function connectSSE() {
+        updateApiStatus('connecting');
+        eventSource = new EventSource(SSE_ENDPOINT);
+
+        eventSource.addEventListener('dashboard', (event) => {
+            try {
+                updateDashboard(JSON.parse(event.data));
+                updateApiStatus('online');
+            } catch (err) {
+                console.error('[SSE] Parse error:', err);
+            }
+        });
+
+        eventSource.onopen = () => {
+            updateApiStatus('online');
+            reconnectAttempts = 0;
+        };
+
+        eventSource.onerror = () => {
+            eventSource.close();
+            updateApiStatus('offline');
+            reconnectAttempts++;
+            const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), MAX_RECONNECT_DELAY);
+            setTimeout(connectSSE, delay);
+        };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // POLLING FALLBACK
+    // ═══════════════════════════════════════════════════════════════════════
+
+    function switchToPollingMode() {
+        document.getElementById('mode-indicator').textContent = '🔄 POLLING';
+        if (eventSource) { eventSource.close(); eventSource = null; }
+
+        async function poll() {
+            try {
+                const res  = await fetch(API_BASE + '/api/dashboard');
+                if (!res.ok) throw new Error(`${res.status}`);
+                updateDashboard(await res.json());
+                updateApiStatus('online');
+            } catch {
+                updateApiStatus('offline');
+            }
+        }
+
+        poll();
+        setInterval(poll, 3000);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // INIT
+    // ═══════════════════════════════════════════════════════════════════════
+
+    if (typeof EventSource !== 'undefined') {
+        connectSSE();
+        setTimeout(() => { if (reconnectAttempts > 10) switchToPollingMode(); }, 60000);
+    } else {
+        switchToPollingMode();
+    }
+
+    window.addEventListener('beforeunload', () => { if (eventSource) eventSource.close(); });
 </script>
 </body>
 </html>

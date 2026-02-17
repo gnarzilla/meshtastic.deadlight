@@ -5,9 +5,27 @@
 #include <sys/stat.h>  
 #include "smtp.h"
 #include "plugins/ratelimiter.h"
-#include "core/utils.h"      // For validate_hmac_bytes
-#include "core/logging.h"    // For deadlight_logging_get_buffered_json
+#include "core/utils.h"   
+#include "core/logging.h"  
 #include "plugins/ratelimiter.h" 
+#include "core/logging.h"
+
+typedef struct {
+    gchar *domain;
+    gchar *federation_endpoint;
+    gchar *public_key;
+    gboolean supports_https;
+} FederationDiscovery;
+
+// SSE Stream State
+typedef struct {
+    DeadlightConnection *conn;
+    GOutputStream *output;
+    GSource *update_timer;
+    guint64 last_total_connections;
+    guint64 last_bytes_transferred;
+    gboolean closed;
+} SSEStreamState;
 
 // Forward declarations
 static gsize api_detect(const guint8 *data, gsize len);
@@ -27,7 +45,19 @@ static DeadlightHandlerResult api_federation_test_domain(DeadlightConnection *co
 static gboolean email_send_via_mailchannels(DeadlightConnection *conn, const gchar *from, const gchar *to, const gchar *subject, const gchar *body, GError **error);
 static DeadlightHandlerResult api_handle_logs_endpoint(DeadlightConnection *conn, GError **error); 
 static DeadlightHandlerResult api_send_404(DeadlightConnection *conn, GError **error);
+static FederationDiscovery* discover_federated_instance(const gchar *target_domain, GError **error);
+static void federation_discovery_free(FederationDiscovery *discovery);
+static DeadlightHandlerResult api_handle_wellknown_deadlight(DeadlightConnection *conn, GError **error);
 
+static DeadlightHandlerResult api_handle_dashboard_endpoint(DeadlightConnection *conn, GError **error);
+// SSE (Server-Sent Events) support
+static gchar* api_build_dashboard_json(DeadlightContext *ctx);
+static DeadlightHandlerResult api_handle_stream_endpoint(DeadlightConnection *conn, GError **error);
+static gboolean sse_send_update(gpointer user_data);
+static void sse_stream_cleanup(SSEStreamState *state);
+static gboolean sse_send_event(GOutputStream *out, const gchar *event_type, 
+                               const gchar *data, GError **error);
+static void api_cleanup_sse_stream(DeadlightConnection *conn);
 
 // Prometheus metrics (called from http.c)
 DeadlightHandlerResult api_handle_prometheus_metrics(DeadlightConnection *conn, GError **error);
@@ -39,20 +69,7 @@ static gchar* fetch_from_workers(const gchar *workers_url, const gchar *endpoint
 static gboolean is_cache_fresh(const gchar *cache_file, gint ttl_seconds);
 static gchar* read_cache_file(const gchar *cache_file, GError **error);
 static gboolean write_cache_file(const gchar *cache_file, const gchar *content, GError **error);
-// ═══════════════════════════════════════════════════════════════════════════
-// FEDERATION TYPES AND HELPERS
-// ═══════════════════════════════════════════════════════════════════════════
 
-typedef struct {
-    gchar *domain;
-    gchar *federation_endpoint;
-    gchar *public_key;
-    gboolean supports_https;
-} FederationDiscovery;
-
-static FederationDiscovery* discover_federated_instance(const gchar *target_domain, GError **error);
-static void federation_discovery_free(FederationDiscovery *discovery);
-static DeadlightHandlerResult api_handle_wellknown_deadlight(DeadlightConnection *conn, GError **error);
 
 // Federation discovery implementation
 static FederationDiscovery* discover_federated_instance(const gchar *target_domain, GError **error) {
@@ -445,12 +462,19 @@ static DeadlightHandlerResult api_handle(DeadlightConnection *conn, GError **err
     else if (g_str_has_prefix(request->uri, "/api/federation/")) {
         result = api_handle_federation_endpoint(conn, request, error);
     }
-    else if (g_str_has_prefix(request->uri, "/api/metrics")) {
-        result = api_handle_metrics_endpoint(conn, error);
-    }
     else if (g_str_equal(request->uri, "/api/logs")) {
         result = api_handle_logs_endpoint(conn, error);
     }
+    else if (g_str_equal(request->uri, "/api/dashboard")) {
+         result = api_handle_dashboard_endpoint(conn, error);
+    }
+    else if (g_str_equal(request->uri, "/api/stream")) {
+        result = api_handle_stream_endpoint(conn, error);
+    }
+    else if (g_str_has_prefix(request->uri, "/api/metrics")) {
+         result = api_handle_metrics_endpoint(conn, error);
+    }
+
     else {
         g_debug("API handler: No route matched for URI: %s", request->uri);
         result = api_send_404(conn, error);
@@ -1763,6 +1787,49 @@ static gchar* fetch_from_workers(const gchar *workers_url, const gchar *endpoint
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// UNIFIED DASHBOARD ENDPOINT
+// ═══════════════════════════════════════════════════════════════════════════
+// Purpose: Single endpoint that returns metrics + logs in one HTTP response
+// Reduces polling overhead by 50% (one request instead of two)
+// Add this to your existing api.c file
+
+/**
+ * /api/dashboard - Unified metrics + logs endpoint
+ * 
+ * Returns:
+ * {
+ *   "metrics": {
+ *     "active_connections": 5,
+ *     "total_connections": 112,
+ *     "bytes_transferred": 77234,
+ *     "uptime": 2142.18,
+ *     "connection_pool": {...},
+ *     "protocols": {...},
+ *     "server_info": {...},
+ *     "rate_limiter": {...}
+ *   },
+ *   "logs": [
+ *     "2026-02-16 12:13:27 [INFO] Connection 113: CONNECT request to api.github.com:443",
+ *     "2026-02-16 12:13:28 [DEBUG] pblished: px_manager_get_proxies_sync: Proxy() = direct://",
+ *     ...
+ *   ]
+ * }
+ */
+static DeadlightHandlerResult api_handle_dashboard_endpoint(DeadlightConnection *conn,
+                                                            GError **error) {
+    g_debug("API dashboard endpoint for conn %lu", conn->id);
+    
+    gchar *json = api_build_dashboard_json(conn->context);
+    if (!json) {
+        return api_send_json_response(conn, 500, "Internal Server Error",
+                                     "{\"error\":\"Failed to build dashboard\"}", error);
+    }
+    
+    DeadlightHandlerResult result = api_send_json_response(conn, 200, "OK", json, error);
+    g_free(json);
+    return result;
+}
+// ═══════════════════════════════════════════════════════════════════════════
 // PROMETHEUS METRICS HANDLER
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -1827,12 +1894,356 @@ DeadlightHandlerResult api_handle_prometheus_metrics(DeadlightConnection *conn, 
     return write_success ? HANDLER_SUCCESS_CLEANUP_NOW : HANDLER_ERROR;
 }
 
+/**
+ * Handle /api/stream - Server-Sent Events endpoint
+ * 
+ * Keeps connection open and pushes updates every 2 seconds (or on change)
+ * Client uses: const events = new EventSource('/api/stream');
+ */
+static DeadlightHandlerResult api_handle_stream_endpoint(DeadlightConnection *conn, 
+                                                         GError **error) {
+    g_info("SSE: Client %lu connected to event stream", conn->id);
+    
+    // Send SSE headers
+    GOutputStream *client_os = g_io_stream_get_output_stream(
+        G_IO_STREAM(conn->client_connection));
+    
+    const gchar *sse_headers = 
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: text/event-stream\r\n"
+        "Cache-Control: no-cache\r\n"
+        "Connection: keep-alive\r\n"
+        "Access-Control-Allow-Origin: *\r\n"
+        "X-Accel-Buffering: no\r\n"  // Disable nginx buffering
+        "\r\n";
+    
+    if (!g_output_stream_write_all(client_os, sse_headers, strlen(sse_headers), 
+                                    NULL, NULL, error)) {
+        g_warning("SSE: Failed to send headers to client %lu", conn->id);
+        return HANDLER_ERROR;
+    }
+    
+    // Flush immediately to establish SSE connection
+    if (!g_output_stream_flush(client_os, NULL, error)) {
+        g_warning("SSE: Failed to flush headers to client %lu", conn->id);
+        return HANDLER_ERROR;
+    }
+    
+    // Send initial data immediately
+    gchar *initial_json = api_build_dashboard_json(conn->context);
+    if (initial_json) {
+        sse_send_event(client_os, "dashboard", initial_json, NULL);
+        g_free(initial_json);
+    }
+    
+    // Create SSE stream state
+    SSEStreamState *state = g_new0(SSEStreamState, 1);
+    state->conn = conn;
+    state->output = client_os;
+    state->closed = FALSE;
+    state->last_total_connections = conn->context->total_connections;
+    state->last_bytes_transferred = conn->context->bytes_transferred;
+    
+    // Schedule periodic updates (every 2 seconds)
+    state->update_timer = g_timeout_source_new_seconds(2);
+    g_source_set_callback(state->update_timer, sse_send_update, state, NULL);
+    g_source_attach(state->update_timer, NULL);
+    
+    // Store state in connection for cleanup
+    conn->protocol_data = state;
+    
+    g_info("SSE: Stream established for client %lu", conn->id);
+    
+    // Return ASYNC to prevent immediate cleanup
+    // The connection stays open until client disconnects or error occurs
+    return HANDLER_SUCCESS_ASYNC;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SSE UPDATE TIMER CALLBACK
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Periodic callback: Send dashboard update to SSE client
+ * 
+ * Only sends updates if metrics have changed (reduces bandwidth)
+ */
+static gboolean sse_send_update(gpointer user_data) {
+    SSEStreamState *state = (SSEStreamState*)user_data;
+    
+    if (state->closed) {
+        g_debug("SSE: Stream %lu already closed, stopping timer", state->conn->id);
+        return G_SOURCE_REMOVE;
+    }
+    
+    DeadlightContext *ctx = state->conn->context;
+    
+    // Only send if metrics changed
+    gboolean metrics_changed = 
+        (ctx->total_connections != state->last_total_connections) ||
+        (ctx->bytes_transferred != state->last_bytes_transferred);
+    
+    if (!metrics_changed) {
+        // Send heartbeat to keep connection alive
+        const gchar *heartbeat = ": heartbeat\n\n";
+        GError *error = NULL;
+        
+        if (!g_output_stream_write_all(state->output, heartbeat, strlen(heartbeat),
+                                       NULL, NULL, &error)) {
+            g_warning("SSE: Failed to send heartbeat to client %lu: %s",
+                     state->conn->id, error ? error->message : "unknown");
+            if (error) g_error_free(error);
+            sse_stream_cleanup(state);
+            return G_SOURCE_REMOVE;
+        }
+        
+        g_output_stream_flush(state->output, NULL, NULL);
+        return G_SOURCE_CONTINUE;
+    }
+    
+    // Build dashboard JSON
+    gchar *json = api_build_dashboard_json(ctx);
+    if (!json) {
+        g_warning("SSE: Failed to build dashboard JSON for client %lu", state->conn->id);
+        return G_SOURCE_CONTINUE;
+    }
+    
+    // Send update event
+    GError *error = NULL;
+    if (!sse_send_event(state->output, "dashboard", json, &error)) {
+        g_warning("SSE: Failed to send update to client %lu: %s",
+                 state->conn->id, error ? error->message : "unknown");
+        if (error) g_error_free(error);
+        g_free(json);
+        sse_stream_cleanup(state);
+        return G_SOURCE_REMOVE;
+    }
+    
+    // Update tracked metrics
+    state->last_total_connections = ctx->total_connections;
+    state->last_bytes_transferred = ctx->bytes_transferred;
+    
+    g_free(json);
+    return G_SOURCE_CONTINUE;
+}
+
+/**
+ * Cleanup SSE stream state
+ */
+static void sse_stream_cleanup(SSEStreamState *state) {
+    if (!state) return;
+    
+    g_info("SSE: Cleaning up stream for client %lu", state->conn->id);
+    
+    state->closed = TRUE;
+    
+    if (state->update_timer) {
+        g_source_destroy(state->update_timer);
+        g_source_unref(state->update_timer);
+        state->update_timer = NULL;
+    }
+    
+    state->output = NULL;
+    g_free(state);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SSE HELPER FUNCTIONS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Send an SSE event to client
+ * 
+ * Format:
+ *   event: dashboard
+ *   data: {"metrics":{...},"logs":[...]}
+ *   
+ */
+static gboolean sse_send_event(GOutputStream *out, const gchar *event_type,
+                               const gchar *data, GError **error) {
+    GString *event = g_string_new(NULL);
+    
+    // Event type (optional, defaults to "message")
+    if (event_type) {
+        g_string_append_printf(event, "event: %s\n", event_type);
+    }
+    
+    // Data (can be multi-line, each line prefixed with "data: ")
+    gchar **lines = g_strsplit(data, "\n", -1);
+    for (gint i = 0; lines[i] != NULL; i++) {
+        if (strlen(lines[i]) > 0) {
+            g_string_append_printf(event, "data: %s\n", lines[i]);
+        }
+    }
+    g_strfreev(lines);
+    
+    // End of event (double newline)
+    g_string_append(event, "\n");
+    
+    // Write to stream
+    gboolean success = g_output_stream_write_all(out, event->str, event->len,
+                                                  NULL, NULL, error);
+    
+    if (success) {
+        // Flush immediately for low latency
+        g_output_stream_flush(out, NULL, NULL);
+    }
+    
+    g_string_free(event, TRUE);
+    return success;
+}
+
+/**
+ * Build dashboard JSON (same as unified endpoint)
+ * 
+ * Extracted to shared function so /api/dashboard and /api/stream use same logic
+ */
+static gchar* api_build_dashboard_json(DeadlightContext *ctx) {
+    if (!ctx) {
+        return g_strdup("{\"error\":\"NULL context\"}");
+    }
+    
+    // Count active connections by protocol
+    gint protocol_counts[13] = {0};
+    
+    if (ctx->connections) {
+        GHashTableIter iter;
+        gpointer key, value;
+        g_hash_table_iter_init(&iter, ctx->connections);
+        
+        while (g_hash_table_iter_next(&iter, &key, &value)) {
+            DeadlightConnection *active_conn = (DeadlightConnection*)value;
+            if (active_conn && active_conn->protocol < 13) {
+                protocol_counts[active_conn->protocol]++;
+            }
+        }
+    }
+    
+    GString *json = g_string_new(NULL);
+    g_string_append(json, "{\"metrics\":{");
+    
+    // Basic metrics
+    g_string_append_printf(json,
+        "\"active_connections\":%lu,"
+        "\"total_connections\":%lu,"
+        "\"bytes_transferred\":%ld,",
+        (gulong)ctx->active_connections,
+        (gulong)ctx->total_connections,
+        ctx->bytes_transferred
+    );
+    
+    // Uptime
+    double uptime = 0.0;
+    if (ctx->uptime_timer) {
+        uptime = g_timer_elapsed(ctx->uptime_timer, NULL);
+    }
+    g_string_append_printf(json, "\"uptime\":%.2f,", uptime);
+    
+    // Connection pool stats
+    if (ctx->conn_pool) {
+        guint idle, active;
+        guint64 total_gets, hits, evicted, failed;
+        gdouble hit_rate;
+        
+        connection_pool_get_stats(ctx->conn_pool, &idle, &active,
+                                 &total_gets, &hits, &hit_rate, &evicted, &failed);
+        
+        g_string_append(json, "\"connection_pool\":{");
+        g_string_append_printf(json, "\"idle\":%u,", idle);
+        g_string_append_printf(json, "\"active\":%u,", active);
+        g_string_append_printf(json, "\"total_requests\":%lu,", total_gets);
+        g_string_append_printf(json, "\"cache_hits\":%lu,", hits);
+        g_string_append_printf(json, "\"hit_rate\":%.2f,", hit_rate * 100);
+        g_string_append_printf(json, "\"evicted\":%lu,", evicted);
+        g_string_append_printf(json, "\"failed\":%lu", failed);
+        g_string_append(json, "},");
+    }
+    
+    // Protocol summary
+    g_string_append(json, "\"protocols\":{");
+    g_string_append_printf(json, "\"HTTP\":{\"active\":%d},", 
+                          protocol_counts[DEADLIGHT_PROTOCOL_HTTP]);
+    g_string_append_printf(json, "\"HTTPS\":{\"active\":%d},", 
+                          protocol_counts[DEADLIGHT_PROTOCOL_HTTPS]);
+    g_string_append_printf(json, "\"WebSocket\":{\"active\":%d},", 
+                          protocol_counts[DEADLIGHT_PROTOCOL_WEBSOCKET]);
+    g_string_append_printf(json, "\"SOCKS\":{\"active\":%d},", 
+                          protocol_counts[DEADLIGHT_PROTOCOL_SOCKS]);
+    g_string_append_printf(json, "\"SMTP\":{\"active\":%d},", 
+                          protocol_counts[DEADLIGHT_PROTOCOL_SMTP]);
+    g_string_append_printf(json, "\"IMAP\":{\"active\":%d},", 
+                          protocol_counts[DEADLIGHT_PROTOCOL_IMAP]);
+    g_string_append_printf(json, "\"FTP\":{\"active\":%d},", 
+                          protocol_counts[DEADLIGHT_PROTOCOL_FTP]);
+    g_string_append_printf(json, "\"API\":{\"active\":%d}", 
+                          protocol_counts[DEADLIGHT_PROTOCOL_API]);
+    g_string_append(json, "},");
+    
+    // Server info
+    g_string_append(json, "\"server_info\":{");
+    g_string_append_printf(json, "\"version\":\"%s\",", DEADLIGHT_VERSION_STRING);
+    g_string_append_printf(json, "\"port\":%d,", ctx->listen_port);
+    g_string_append_printf(json, "\"ssl_intercept\":%s,",
+                          ctx->ssl_intercept_enabled ? "true" : "false");
+    g_string_append_printf(json, "\"max_connections\":%d", ctx->max_connections);
+    g_string_append(json, "},");
+    
+    // Rate limiter stats
+    if (ctx->plugins_data) {
+        guint64 limited = 0, passed = 0;
+        deadlight_ratelimiter_get_stats(ctx, &limited, &passed);
+        
+        g_string_append(json, "\"rate_limiter\":{");
+        g_string_append_printf(json, "\"total_limited\":%lu,", limited);
+        g_string_append_printf(json, "\"total_passed\":%lu,", passed);
+        g_string_append_printf(json, "\"rejection_rate\":%.2f",
+                              passed > 0 ? (100.0 * limited / (limited + passed)) : 0.0);
+        g_string_append(json, "}");
+    } else {
+        g_string_append(json, "\"rate_limiter\":null");
+    }
+    
+    g_string_append(json, "},");  // Close metrics
+    
+    // Logs
+    gchar *json_logs = deadlight_logging_get_buffered_json();
+    if (json_logs) {
+        g_string_append(json, "\"logs\":");
+        g_string_append(json, json_logs);
+        g_free(json_logs);
+    } else {
+        g_string_append(json, "\"logs\":[]");
+    }
+    
+    g_string_append(json, "}");  // Close root
+    
+    return g_string_free(json, FALSE);  // Return string, free GString
+}
+
+/**
+ * SSE cleanup hook for api.c cleanup function
+ * 
+ * Add this to your existing api_cleanup() function:
+ */
+static void api_cleanup_sse_stream(DeadlightConnection *conn) {
+    if (conn->protocol_data && conn->protocol == DEADLIGHT_PROTOCOL_API) {
+        // Check if this was an SSE stream by looking for SSEStreamState
+        SSEStreamState *state = (SSEStreamState*)conn->protocol_data;
+        if (state && state->update_timer) {
+            sse_stream_cleanup(state);
+            conn->protocol_data = NULL;
+        }
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // CLEANUP
 // ═══════════════════════════════════════════════════════════════════════════
 
 static void api_cleanup(DeadlightConnection *conn) {
     g_debug("API cleanup called for conn %lu", conn->id);
+    
     // Clean up any API-specific resources if needed
+    api_cleanup_sse_stream(conn);  
     (void)conn; // Suppress unused parameter warning
 }

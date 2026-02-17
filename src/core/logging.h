@@ -10,7 +10,6 @@
 gboolean deadlight_logging_init(DeadlightContext *context, GError **error);
 void deadlight_logging_cleanup(DeadlightContext *context);
 gchar *deadlight_logging_get_buffered_json(void);
-
 // --- Convenience Logging Macros ---
 // This is the clean way to provide log_info, log_warn, etc.
 // They are wrappers around the standard GLib logging functions,
