@@ -4,8 +4,7 @@
 
 [![Meshtastic](https://meshtastic.deadlight.boo/favicon.ico)](https://meshtastic.deadlight.boo) [Project/Community Blog](https://meshtastic.deadlight.boo) · [Why This Exists](#why-this-exists) · [Getting Started](#getting-started) · [Hardware](#hardware) · [Usage](#usage) · [Configuration](#configuration) · [How It Works](#how-it-works) · [Real-World Use Cases](#real-world-use-cases) · [Performance](#performance) · [Roadmap](#roadmap) · [License](#license)
 
-![Deadlight Meshtastic Proxy (no lora)](assets/output.gif)
-
+![Deadlight-Mesh Web UI](src/assets/Deadlight-Mesh-webUI.gif)
 
 ## Overview
 
@@ -20,6 +19,8 @@ Deadlight Meshtastic Proxy transforms LoRa mesh networks into practical Internet
 - Truly off-grid: solar-powered nodes can provide connectivity across kilometers
 
 Think of it as giving your Meshtastic network the capabilities of a satellite terminal, but running on $30 hardware and zero monthly fees.
+
+![Deadlight Meshtastic Proxy (no lora)](src/assets/output.gif)
 
 ## Why This Exists
 
