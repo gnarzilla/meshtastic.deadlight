@@ -1,10 +1,10 @@
-# Deadlight Proxy v1.0 - Makefile
+# deadmesh (meshtastic.deadlight) v1.0.0
 # Build system for the modular proxy server
 
 #=============================================================================
 # Project Configuration
 #=============================================================================
-PROJECT = deadlight
+PROJECT = deadmesh
 VERSION = 1.0.0
 PREFIX = /usr/local
 
@@ -12,7 +12,7 @@ PREFIX = /usr/local
 # Compiler Configuration
 #=============================================================================
 CC = gcc
-CFLAGS = -std=c99 -Wall -Wextra -pedantic -O2 -g
+CFLAGS = -std=gnu11 -Wall -Wextra -pedantic -O2 -g
 LDFLAGS = -Wl,--as-needed
 LIBS = -lssl -lcrypto -lpthread
 
@@ -38,9 +38,9 @@ VPATH = src/core:src/protocols:src/plugins:src/ui:src/vpn
 
 # Installation directories
 LIBDIR = $(PREFIX)/lib
-CONFDIR = /etc/deadlight
-LOGDIR = /var/log/deadlight
-CACHEDIR = /var/cache/deadlight
+CONFDIR = /etc/deadmesh
+LOGDIR = /var/log/deadmesh
+CACHEDIR = /var/cache/deadmesh
 
 #=============================================================================
 # Source Files

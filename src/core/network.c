@@ -1065,3 +1065,16 @@ static void connection_pool_log_stats(ConnectionPool *pool) {
            (guint)0,      // Placeholder for evicted (implement if needed)
            (guint)0);     // Placeholder for failed (implement if needed)
 }
+/**
+ * Cleanup network resources after stop.
+ * network_stop() already performs full teardown; this exists so the
+ * goto-based shutdown sequence in main.c can call a distinct cleanup
+ * phase without duplicating logic or crashing on a second free.
+ */
+void deadlight_network_cleanup(DeadlightContext *context) {
+    if (!context || !context->network) return;
+
+    // stop already freed everything — this is a no-op safety net
+    // If somehow stop wasn't called first, call it now
+    deadlight_network_stop(context);
+}
