@@ -1,5 +1,5 @@
 /**
- * Deadlight Proxy v1.0 - Network Module (FIXED)
+ * Deadlight Proxy v1.0 - Network Module
  *
  * Socket management, connection handling, and data transfer
  * 

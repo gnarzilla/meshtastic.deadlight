@@ -32,9 +32,10 @@ PLUGINDIR = src/plugins
 TESTDIR = src/tests
 BINDIR = bin
 PLUGIN_BINDIR = $(BINDIR)/plugins
+TOOLSDIR = tools
 
 # IMPORTANT: Added src/plugins to VPATH so make finds ratelimiter.c
-VPATH = src/core:src/protocols:src/plugins:src/ui:src/vpn
+VPATH = src/core:src/protocols:src/plugins:src/ui:src/vpn:src/mesh
 
 # Installation directories
 LIBDIR = $(PREFIX)/lib
@@ -54,10 +55,14 @@ PROTOCOL_SOURCES = http.c imap.c imaps.c socks.c smtp.c websocket.c ftp.c api.c
 # NEW: Plugins that are statically linked because Core/API uses them directly
 STATIC_PLUGIN_SOURCES = ratelimiter.c
 
+# Mesh transport layer — statically linked into the binary AND
+# compiled into meshtastic.so (each gets its own compilation unit)
+MESH_SOURCES = mesh_framing.c mesh_session.c mesh_stream.c
+
 VPN_SOURCES = vpn_gateway.c
 
 # Combine all sources into one list
-ALL_SOURCES = $(CORE_SOURCES) $(PROTOCOL_SOURCES) $(STATIC_PLUGIN_SOURCES) $(VPN_SOURCES)
+ALL_SOURCES = $(CORE_SOURCES) $(PROTOCOL_SOURCES) $(STATIC_PLUGIN_SOURCES) $(MESH_SOURCES) $(VPN_SOURCES)
 
 # ==== UI configuration ====
 UI ?= 0
@@ -86,11 +91,11 @@ PLUGIN_TARGETS = $(PLUGIN_BINDIR)/adblocker.so \
 #=============================================================================
 
 # Default target
-all: dirs $(MAIN_TARGET) plugins
+all: dirs $(MAIN_TARGET) plugins sim
 
 # Create necessary directories
 dirs:
-	@mkdir -p $(OBJDIR) $(BINDIR) $(PLUGIN_BINDIR)
+	@mkdir -p $(OBJDIR) $(BINDIR) $(PLUGIN_BINDIR) $(TOOLSDIR)
 
 # Main executable
 $(MAIN_TARGET): $(ALL_OBJECTS)
@@ -157,6 +162,7 @@ NANOPB_CFLAGS   = -I$(NANOPB_INC) \
                   -I$(GEN_DIR)/meshtastic \
                   -Isrc \
                   -Isrc/core \
+                  -Isrc/mesh \
                   -Wno-pedantic
 
 PROTO_FILES = $(filter-out $(PROTO_DIR)/deviceonly.proto,$(wildcard $(PROTO_DIR)/*.proto))
@@ -174,17 +180,40 @@ $(GEN_DIR)/meshtastic/%.pb.c $(GEN_DIR)/meshtastic/%.pb.h: $(PROTO_DIR)/%.proto 
 
 $(MESHTASTIC_PB_C) $(MESHTASTIC_PB_H): $(PROTO_FILES)
 
+MESH_SRC_FILES  = src/mesh/mesh_framing.c \
+                  src/mesh/mesh_session.c \
+                  src/mesh/mesh_stream.c
+
 $(PLUGIN_BINDIR)/meshtastic.so: \
 		$(PLUGINDIR)/meshtastic.c \
 		$(PLUGINDIR)/meshtastic.h \
+		$(MESH_SRC_FILES) \
 		$(MESHTASTIC_PB_C) \
 		$(NANOPB_SOURCES) \
 		| $(PLUGIN_BINDIR)
 	@echo "Building MeshtasticTunnel plugin..."
 	@$(CC) $(ALL_CFLAGS) $(NANOPB_CFLAGS) -fPIC -shared -o $@ \
-		$(PLUGINDIR)/meshtastic.c $(MESHTASTIC_PB_C) $(NANOPB_SOURCES) $(ALL_LIBS)
+		$(PLUGINDIR)/meshtastic.c $(MESH_SRC_FILES) $(MESHTASTIC_PB_C) $(NANOPB_SOURCES) $(ALL_LIBS)
 
 PLUGIN_TARGETS += $(PLUGIN_BINDIR)/meshtastic.so
+
+# ── Mesh Simulator ──────────────────────────────────────────────────────────
+# Standalone binary — no GLib dependency, just pthreads + pty
+# Usage: ./tools/mesh-sim [--loss N] [--delay MS] [--hops N]
+
+SIM_TARGET = $(TOOLSDIR)/mesh-sim
+
+sim: dirs $(SIM_TARGET)
+
+$(SIM_TARGET): tools/mesh-sim.c src/mesh/mesh_framing.c src/mesh/mesh_framing.h
+	@echo "Building mesh simulator..."
+	@$(CC) -std=gnu11 -Wall -Wextra -O2 -g \
+		-Isrc/mesh \
+		-o $@ \
+		tools/mesh-sim.c src/mesh/mesh_framing.c \
+		-lpthread -lutil
+	@echo "Simulator built: $@"
+	@echo "  Run: ./$@ [--loss N] [--delay MS]"
 
 #=============================================================================
 # Utility Targets
@@ -193,6 +222,7 @@ PLUGIN_TARGETS += $(PLUGIN_BINDIR)/meshtastic.so
 clean:
 	@echo "Cleaning build files..."
 	@rm -rf $(OBJDIR) $(BINDIR)
+	@rm -f $(SIM_TARGET)
 	@rm -f src/ui/assets.c
 	@rm -f $(GEN_DIR)/*.pb.c $(GEN_DIR)/*.pb.h
 	@rm -rf $(GEN_DIR)
@@ -206,4 +236,4 @@ run-vpn: $(MAIN_TARGET)
 	@echo "Running $(PROJECT) with VPN gateway (requires root)..."
 	@sudo ./$(MAIN_TARGET) -v
 
-.PHONY: all dirs clean run run-vpn plugins
+.PHONY: all dirs clean run run-vpn plugins sim
