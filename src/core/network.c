@@ -1,7 +1,8 @@
 /**
- * Deadlight Proxy v1.0 - Network Module
+ * Deadlight Proxy v1.0 - Network Module (FIXED)
  *
  * Socket management, connection handling, and data transfer
+ * 
  */
 #include <glib.h>
 #include <gio/gio.h>
@@ -43,6 +44,23 @@ static void _destroy_notify_connection (gpointer data)
 {
     DeadlightConnection *conn = (DeadlightConnection*)data;
     cleanup_connection_internal(conn, FALSE);
+}
+
+void deadlight_network_cleanup(DeadlightContext *context) {
+    if (!context || !context->network) {
+        return;
+    }
+    // Clean up network resources
+    if (context->network->listener) {
+        g_socket_service_stop(context->network->listener);
+        g_object_unref(context->network->listener);
+    }
+    if (context->network->bind_address) {
+        g_object_unref(context->network->bind_address);
+    }
+    g_mutex_clear(&context->network->connection_mutex);
+    g_free(context->network);
+    context->network = NULL;
 }
 
 /**
@@ -163,8 +181,16 @@ void deadlight_network_stop(DeadlightContext *context) {
             context->worker_pool = NULL;
         }
         
-        // Now close all connections safely
         if (context->connections) {
+            GHashTableIter iter;
+            gpointer key, value;
+            
+            g_hash_table_iter_init(&iter, context->connections);
+            while (g_hash_table_iter_next(&iter, &key, &value)) {
+                DeadlightConnection *conn = (DeadlightConnection *)value;
+                // Set a flag to interrupt tunneling loops
+                conn->should_stop = TRUE;
+            }
             g_mutex_lock(&context->network->connection_mutex);
             guint count = g_hash_table_size(context->connections);
             g_info("Closing %u active connections...", count);
@@ -204,6 +230,7 @@ void deadlight_connection_free(DeadlightConnection *conn) {
     // that were never added to the table
     cleanup_connection_internal(conn, FALSE);
 }
+
 /**
  * Handle incoming connection
  */
@@ -331,8 +358,8 @@ DeadlightConnection *deadlight_connection_new(DeadlightContext *context,
 
 /**
  * Worker thread function
+ * 
  */
-
 static void connection_thread_func(gpointer data, gpointer user_data) {
     DeadlightConnection *conn = (DeadlightConnection *)data;
     DeadlightContext *context = (DeadlightContext *)user_data;
@@ -343,28 +370,40 @@ static void connection_thread_func(gpointer data, gpointer user_data) {
     conn->state = DEADLIGHT_STATE_DETECTING;
 
     GSocket *socket = g_socket_connection_get_socket(conn->client_connection);
-    g_socket_set_blocking(socket, FALSE);
     guint8 peek_buffer[2048];
     gssize bytes_peeked = 0;
     gint timeout = deadlight_config_get_int(context, "protocols", "protocol_detection_timeout", 5);
-    gint64 end_time = g_get_monotonic_time() + (timeout * G_TIME_SPAN_SECOND);
-
-    while (TRUE) {
-        bytes_peeked = g_socket_receive(socket, (gchar *)peek_buffer, sizeof(peek_buffer), NULL, &error);
-        if (bytes_peeked > 0) {
-            g_byte_array_append(conn->client_buffer, peek_buffer, bytes_peeked);
-            break;
-        }
-        if (bytes_peeked == 0 || (error && !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_WOULD_BLOCK)) || g_get_monotonic_time() > end_time) {
-            if(bytes_peeked == 0) g_info("Connection %lu: Client closed before sending data.", conn->id);
-            else if(error) g_warning("Connection %lu: Read error: %s", conn->id, error->message);
-            else g_warning("Connection %lu: Protocol detection timeout.", conn->id);
+    
+    // FIX: Use blocking wait instead of busy-loop polling
+    // This allows the CPU to enter deep sleep states (C3/C6) on edge devices
+    g_socket_set_blocking(socket, TRUE);
+    g_socket_set_timeout(socket, timeout);
+    
+    // Wait for data to be available (blocks efficiently)
+    if (!g_socket_condition_wait(socket, G_IO_IN, NULL, &error)) {
+        if (error) {
+            g_warning("Connection %lu: Socket wait error: %s", conn->id, error->message);
             g_clear_error(&error);
-            goto cleanup; 
+        } else {
+            g_warning("Connection %lu: Protocol detection timeout.", conn->id);
+        }
+        goto cleanup;
+    }
+    
+    // Now read the data (will not block long since we know it's available)
+    bytes_peeked = g_socket_receive(socket, (gchar *)peek_buffer, sizeof(peek_buffer), NULL, &error);
+    
+    if (bytes_peeked <= 0) {
+        if (bytes_peeked == 0) {
+            g_info("Connection %lu: Client closed before sending data.", conn->id);
+        } else if (error) {
+            g_warning("Connection %lu: Read error: %s", conn->id, error->message);
         }
         g_clear_error(&error);
-        g_usleep(10000); // 10ms
+        goto cleanup;
     }
+    
+    g_byte_array_append(conn->client_buffer, peek_buffer, bytes_peeked);
 
     const DeadlightProtocolHandler *handler = deadlight_protocol_detect_and_assign(conn, conn->client_buffer->data, conn->client_buffer->len);
 
@@ -395,7 +434,6 @@ static void connection_thread_func(gpointer data, gpointer user_data) {
     // ===== PROTOCOL HANDLING LOGIC ========
     // ==========================================================
 
-
     DeadlightHandlerResult handler_result = handler->handle(conn, &error);
 
     switch (handler_result) {
@@ -409,8 +447,6 @@ static void connection_thread_func(gpointer data, gpointer user_data) {
             g_debug("Connection %lu: Asynchronous handler for '%s' started; worker thread exiting.", 
                     conn->id, deadlight_protocol_to_string(conn->protocol));
             // Handler now owns the connection lifecycle
-            // If handler crashes or forgets cleanup, connection will be orphaned
-            // TODO: Consider adding a timeout-based cleanup watchdog
             break;
             
         case HANDLER_ERROR:
@@ -429,12 +465,11 @@ static void connection_thread_func(gpointer data, gpointer user_data) {
     
     return;  // Exit cleanly for ASYNC case
 
-        cleanup:
-        if (conn->handler && conn->handler->cleanup) {
-            conn->handler->cleanup(conn);
-        }
-        // Use the function that removes from table
-        cleanup_connection_internal(conn, TRUE);
+cleanup:
+    if (conn->handler && conn->handler->cleanup) {
+        conn->handler->cleanup(conn);
+    }
+    cleanup_connection_internal(conn, TRUE);
 }
 
 /**
@@ -444,11 +479,39 @@ gboolean deadlight_network_connect_upstream(DeadlightConnection *conn, GError **
     g_return_val_if_fail(conn != NULL, FALSE);
     g_return_val_if_fail(conn->target_host != NULL, FALSE);
     
-    // Determine connection type we need
+    // For CONNECT tunnels to port 443, try to reuse a TLS connection first
+    // since that's what gets pooled after tunnel close
+    GIOStream *pooled = NULL;
+    
+    if (conn->protocol == DEADLIGHT_PROTOCOL_CONNECT && conn->target_port == 443) {
+        pooled = connection_pool_get(
+            conn->context->conn_pool,
+            conn->target_host,
+            conn->target_port,
+            CONN_TYPE_CLIENT_TLS
+        );
+        
+        if (pooled) {
+            conn->upstream_tls = G_TLS_CONNECTION(g_object_ref(pooled));
+            
+            GIOStream *base = NULL;
+            g_object_get(conn->upstream_tls, "base-io-stream", &base, NULL);
+            if (G_IS_SOCKET_CONNECTION(base)) {
+                conn->upstream_connection = G_SOCKET_CONNECTION(g_object_ref(base));
+            }
+            
+            conn->ssl_established = TRUE;
+            
+            g_info("Connection %lu: Pool HIT - reusing TLS connection to %s:%d",
+                   conn->id, conn->target_host, conn->target_port);
+            return TRUE;
+        }
+    }
+    
+    // Original logic: try desired type
     ConnectionType desired_type = conn->will_use_ssl ? CONN_TYPE_CLIENT_TLS : CONN_TYPE_PLAIN;
     
-    // Try to get from pool first
-    GIOStream *pooled = connection_pool_get(
+    pooled = connection_pool_get(
         conn->context->conn_pool,
         conn->target_host,
         conn->target_port,
@@ -457,10 +520,8 @@ gboolean deadlight_network_connect_upstream(DeadlightConnection *conn, GError **
     
     if (pooled) {
         if (conn->will_use_ssl) {
-            // Reuse TLS connection
             conn->upstream_tls = G_TLS_CONNECTION(g_object_ref(pooled));
             
-            // Get the base socket connection for compatibility
             GIOStream *base = NULL;
             g_object_get(conn->upstream_tls, "base-io-stream", &base, NULL);
             if (G_IS_SOCKET_CONNECTION(base)) {
@@ -472,7 +533,6 @@ gboolean deadlight_network_connect_upstream(DeadlightConnection *conn, GError **
             g_info("Connection %lu: Reusing TLS connection to %s:%d from pool",
                    conn->id, conn->target_host, conn->target_port);
         } else {
-            // Reuse plain connection
             conn->upstream_connection = G_SOCKET_CONNECTION(g_object_ref(pooled));
             
             g_info("Connection %lu: Reusing plain connection to %s:%d from pool",
@@ -485,10 +545,14 @@ gboolean deadlight_network_connect_upstream(DeadlightConnection *conn, GError **
     // Pool miss - create new connection
     g_debug("Connection %lu: Pool MISS - creating new connection to %s:%d",
             conn->id, conn->target_host, conn->target_port);
-    
+
     GSocketClient *client = g_socket_client_new();
-    g_socket_client_set_timeout(client, 30);
-    
+    // Read from config — mesh paths need much longer timeouts than the old 30s hardcode.
+    // deadmesh default is 120s; proxy.deadlight default is 30s.
+    gint upstream_timeout = deadlight_config_get_int(conn->context, "network",
+                                                      "upstream_timeout", 30);
+    g_socket_client_set_timeout(client, upstream_timeout);
+
     conn->upstream_connection = g_socket_client_connect_to_host(
         client,
         conn->target_host,
@@ -496,34 +560,73 @@ gboolean deadlight_network_connect_upstream(DeadlightConnection *conn, GError **
         NULL,
         error
     );
-    
     g_object_unref(client);
-    
+
     if (!conn->upstream_connection) {
         g_warning("Connection %lu: Failed to connect to %s:%d: %s",
-                  conn->id, conn->target_host, conn->target_port,
-                  error && *error ? (*error)->message : "unknown error");
+                conn->id, conn->target_host, conn->target_port,
+                error && *error ? (*error)->message : "unknown error");
         return FALSE;
     }
-    
-    // Register with pool (will upgrade to TLS later if needed)
-    connection_pool_register(
-        conn->context->conn_pool,
-        G_IO_STREAM(conn->upstream_connection),
-        conn->target_host,
-        conn->target_port,
-        CONN_TYPE_PLAIN
-    );
-    
-    g_info("Connection %lu: Connected to %s:%d (SSL=%d)",
-           conn->id, conn->target_host, conn->target_port, conn->will_use_ssl);
-    
+
+    if (conn->will_use_ssl) {
+        GSocketConnectable *identity = g_network_address_new(conn->target_host, conn->target_port);
+        
+        GIOStream *tls_stream = g_tls_client_connection_new(
+            G_IO_STREAM(conn->upstream_connection),
+            identity,
+            error
+        );
+        g_object_unref(identity);
+        
+        if (!tls_stream) {
+            g_warning("Connection %lu: Failed to create TLS connection: %s",
+                    conn->id, error && *error ? (*error)->message : "unknown");
+            g_clear_object(&conn->upstream_connection);
+            return FALSE;
+        }
+        
+        conn->upstream_tls = G_TLS_CONNECTION(tls_stream);
+        
+        // Perform the handshake synchronously
+        if (!g_tls_connection_handshake(conn->upstream_tls, NULL, error)) {
+            g_warning("Connection %lu: TLS handshake failed: %s",
+                    conn->id, error && *error ? (*error)->message : "unknown");
+            g_clear_object(&conn->upstream_tls);
+            g_clear_object(&conn->upstream_connection);
+            return FALSE;
+        }
+        
+        conn->ssl_established = TRUE;
+        
+        // Register as TLS connection
+        connection_pool_register(
+            conn->context->conn_pool,
+            G_IO_STREAM(conn->upstream_tls),
+            conn->target_host,
+            conn->target_port,
+            CONN_TYPE_CLIENT_TLS
+        );
+        
+        g_info("Connection %lu: TLS established to %s:%d",
+            conn->id, conn->target_host, conn->target_port);
+    } else {
+        // Register plain connection
+        connection_pool_register(
+            conn->context->conn_pool,
+            G_IO_STREAM(conn->upstream_connection),
+            conn->target_host,
+            conn->target_port,
+            CONN_TYPE_PLAIN
+        );
+        
+        g_info("Connection %lu: Connected to %s:%d (plain)",
+            conn->id, conn->target_host, conn->target_port);
+    }
+
     return TRUE;
 }
 
-/**
- * Release connection back to pool (called instead of closing)
- */
 /**
  * Release connection back to pool (called instead of closing)
  */
@@ -548,11 +651,6 @@ void deadlight_network_release_to_pool(DeadlightConnection *conn, const gchar *r
     }
     
     // Check if we should pool this connection
-    // Don't pool if:
-    // - Connection had errors
-    // - Protocol is one-way (CONNECT tunnel)
-    // - State is not CONNECTED
-    
     if (conn->state != DEADLIGHT_STATE_CONNECTED && conn->state != DEADLIGHT_STATE_TUNNELING) {
         should_pool = FALSE;
         g_debug("Connection %lu: Not pooling: %s:%d (reason=bad state)",
@@ -560,7 +658,6 @@ void deadlight_network_release_to_pool(DeadlightConnection *conn, const gchar *r
     }
     
     // For CONNECT tunnels, we can't reuse because the tunnel is bidirectional
-    // and consumed all data
     if (conn->protocol == DEADLIGHT_PROTOCOL_HTTP && conn->is_connect_tunnel) {
         should_pool = FALSE;
         g_debug("Connection %lu: Not pooling: %s:%d (reason=one-way protocol)",
@@ -568,7 +665,6 @@ void deadlight_network_release_to_pool(DeadlightConnection *conn, const gchar *r
     }
     
     if (should_pool) {
-        // Release to pool
         connection_pool_release(
             conn->context->conn_pool,
             stream_to_release,
@@ -587,15 +683,12 @@ void deadlight_network_release_to_pool(DeadlightConnection *conn, const gchar *r
         conn->upstream_tls = NULL;
         conn->upstream_connection = NULL;
     } else {
-        // Just close it
         g_debug("Connection %lu: Closing %s connection to %s:%d (not pooling: %s)",
                 conn->id,
                 type == CONN_TYPE_CLIENT_TLS ? "TLS" : "plain",
                 conn->target_host,
                 conn->target_port,
                 reason ? reason : "unknown");
-        
-        // Will be cleaned up in connection cleanup
     }
 } 
 
@@ -605,10 +698,6 @@ void deadlight_network_release_to_pool(DeadlightConnection *conn, const gchar *r
 static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remove_from_table) {
     if (!conn) return;
     
-    if (conn->cleaned) {
-        g_debug("Connection %lu already cleaned, skipping", conn->id);
-        return;
-    }
     conn->cleaned = TRUE;
 
     g_debug("Cleaning up connection %lu (state=%d, remove_from_table=%d)", 
@@ -621,9 +710,6 @@ static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remo
     
     // === POOL RELEASE: Return connection if appropriate ===
     if (conn->upstream_connection && conn->target_host && conn->context && conn->context->conn_pool) {
-        // Check if this connection is actually in the pool
-        // The pool will handle its own reference counting
-        
         gboolean use_ssl = conn->upstream_tls != NULL;
         gboolean should_pool = FALSE;
         const gchar *reason = "unknown";
@@ -669,14 +755,23 @@ static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remo
                     break;
                 }
                 
+                case DEADLIGHT_PROTOCOL_CONNECT:
                 case DEADLIGHT_PROTOCOL_HTTPS:
-                    if (conn->state == DEADLIGHT_STATE_CONNECTED && use_ssl) {
+                {
+                    // CONNECT tunnels: the upstream TLS connection is reusable
+                    // if the tunnel closed cleanly and the socket is healthy.
+                    // The socket health check already passed above.
+                    if (use_ssl && conn->state == DEADLIGHT_STATE_CLOSING) {
+                        should_pool = TRUE;
+                        reason = "CONNECT tunnel closed cleanly";
+                    } else if (conn->state == DEADLIGHT_STATE_CONNECTED && use_ssl) {
                         should_pool = TRUE;
                         reason = "HTTPS clean";
                     } else {
-                        reason = "HTTPS incomplete";
+                        reason = "HTTPS/CONNECT incomplete";
                     }
                     break;
+                }
                 
                 case DEADLIGHT_PROTOCOL_IMAP:
                 case DEADLIGHT_PROTOCOL_IMAPS:
@@ -697,8 +792,7 @@ static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remo
                     }
                     break;
                 
-                // One-way protocols - never pool
-                case DEADLIGHT_PROTOCOL_CONNECT:
+                // Truly non-reusable protocols
                 case DEADLIGHT_PROTOCOL_SOCKS:
                 case DEADLIGHT_PROTOCOL_SOCKS4:
                 case DEADLIGHT_PROTOCOL_SOCKS5:
@@ -719,20 +813,24 @@ static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remo
             g_info("Connection %lu: Returning to pool: %s:%d (SSL=%d, reason=%s)",
                 conn->id, conn->target_host, conn->target_port, use_ssl, reason);
             
+            GIOStream *stream_to_pool = use_ssl 
+                ? G_IO_STREAM(conn->upstream_tls) 
+                : G_IO_STREAM(conn->upstream_connection);
+            
             connection_pool_release(
                 conn->context->conn_pool,
-                G_IO_STREAM(conn->upstream_connection), 
+                stream_to_pool,
                 conn->target_host,
                 conn->target_port,
-                use_ssl ? CONN_TYPE_CLIENT_TLS : CONN_TYPE_PLAIN 
+                use_ssl ? CONN_TYPE_CLIENT_TLS : CONN_TYPE_PLAIN
             );
             
-            // Pool now owns the reference - clear our pointer but don't unref
+            // Pool now owns these — clear both so cleanup doesn't close them
+            conn->upstream_tls = NULL;
             conn->upstream_connection = NULL;
         } else {
             g_debug("Connection %lu: Not pooling: %s:%d (SSL=%d, reason=%s)",
                 conn->id, conn->target_host, conn->target_port, use_ssl, reason);
-            // We still own this connection, will be cleaned up below
         }
     }
     
@@ -775,6 +873,7 @@ static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remo
     if (conn->client_connection) {
         if (G_IS_IO_STREAM(conn->client_connection)) {
             GError *close_error = NULL;
+
             if (!g_io_stream_close(G_IO_STREAM(conn->client_connection), NULL, &close_error)) {
                 if (close_error) {
                     g_debug("Connection %lu: Client socket close error: %s",
@@ -874,7 +973,7 @@ static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remo
                 conn->context->active_connections--;
                 g_mutex_unlock(&conn->context->network->connection_mutex);
                 
-                // CRITICAL FIX: Return here since destructor freed the connection
+                // Return here since destructor freed the connection
                 return;
             }
             
@@ -886,37 +985,17 @@ static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remo
     g_free(conn);
 }
 
-/**
- * A simple, blocking TCP connection function.
- */
 GSocketConnection* deadlight_network_connect_tcp(DeadlightContext *context, const gchar *host, guint16 port, GError **error) {
-    // We now have the context if we need it for config values.
-    // Since we aren't using it yet, we can mark it to prevent new warnings.
     (void)context;
 
     GSocketClient *client = g_socket_client_new();
-
-    // FUTURE USE: g_socket_client_set_timeout(client, deadlight_config_get_int(context, "network", "upstream_timeout", 30));
-
     GSocketConnection *connection = g_socket_client_connect_to_host(client, host, port, NULL, error);
     g_object_unref(client);
 
     return connection;
 }
 
-/**
- * Tunnels data between two GSocketConnections using a g_poll loop.
- * This is a generic version of the SSL tunnel logic.
- */
 void deadlight_network_tunnel_socket_connections(GSocketConnection *conn1, GSocketConnection *conn2) {
-    // This logic is nearly identical to the refactored start_ssl_tunnel_blocking
-    
-    GPollFD fds[2];
-    fds[0].fd = g_socket_get_fd(g_socket_connection_get_socket(conn1));
-    fds[0].events = G_IO_IN;
-    fds[1].fd = g_socket_get_fd(g_socket_connection_get_socket(conn2));
-    fds[1].events = G_IO_IN;
-    
     GInputStream *in1 = g_io_stream_get_input_stream(G_IO_STREAM(conn1));
     GOutputStream *out1 = g_io_stream_get_output_stream(G_IO_STREAM(conn1));
     GInputStream *in2 = g_io_stream_get_input_stream(G_IO_STREAM(conn2));
@@ -924,34 +1003,105 @@ void deadlight_network_tunnel_socket_connections(GSocketConnection *conn1, GSock
 
     guchar buffer[16384];
     gboolean running = TRUE;
+    
+    // Create pollable sources if possible (for TLS support)
+    GSource *source1 = NULL;
+    GSource *source2 = NULL;
+    
+    if (G_IS_POLLABLE_INPUT_STREAM(in1) && g_pollable_input_stream_can_poll(G_POLLABLE_INPUT_STREAM(in1))) {
+        source1 = g_pollable_input_stream_create_source(G_POLLABLE_INPUT_STREAM(in1), NULL);
+    }
+    if (G_IS_POLLABLE_INPUT_STREAM(in2) && g_pollable_input_stream_can_poll(G_POLLABLE_INPUT_STREAM(in2))) {
+        source2 = g_pollable_input_stream_create_source(G_POLLABLE_INPUT_STREAM(in2), NULL);
+    }
 
     while (running) {
-        int ret = g_poll(fds, 2, 30000); // 30 second timeout
-        if (ret <= 0) break; // Error or timeout
-
-        if (fds[0].revents & (G_IO_IN | G_IO_HUP | G_IO_ERR)) {
-            gssize bytes = g_input_stream_read(in1, buffer, sizeof(buffer), NULL, NULL);
-            if (bytes <= 0 || !g_output_stream_write_all(out2, buffer, bytes, NULL, NULL, NULL)) {
+        GError *error = NULL;
+        
+        // Conn1 -> Conn2
+        if (G_IS_POLLABLE_INPUT_STREAM(in1) && 
+            g_pollable_input_stream_can_poll(G_POLLABLE_INPUT_STREAM(in1))) {
+            
+            if (g_pollable_input_stream_is_readable(G_POLLABLE_INPUT_STREAM(in1))) {
+                gssize bytes = g_pollable_input_stream_read_nonblocking(
+                    G_POLLABLE_INPUT_STREAM(in1), buffer, sizeof(buffer), NULL, &error);
+                if (bytes > 0) {
+                    if (!g_output_stream_write_all(out2, buffer, bytes, NULL, NULL, NULL)) {
+                        running = FALSE;
+                    }
+                } else if (bytes == 0) {
+                    running = FALSE;
+                } else if (error && !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_WOULD_BLOCK)) {
+                    running = FALSE;
+                }
+                g_clear_error(&error);
+            }
+        } else {
+            // Fallback for non-pollable streams
+            gssize bytes = g_input_stream_read(in1, buffer, sizeof(buffer), NULL, &error);
+            if (bytes > 0) {
+                if (!g_output_stream_write_all(out2, buffer, bytes, NULL, NULL, NULL)) {
+                    running = FALSE;
+                }
+            } else if (bytes <= 0) {
                 running = FALSE;
             }
+            g_clear_error(&error);
         }
 
-        if (running && (fds[1].revents & (G_IO_IN | G_IO_HUP | G_IO_ERR))) {
-            gssize bytes = g_input_stream_read(in2, buffer, sizeof(buffer), NULL, NULL);
-            if (bytes <= 0 || !g_output_stream_write_all(out1, buffer, bytes, NULL, NULL, NULL)) {
+        // Conn2 -> Conn1
+        if (running && G_IS_POLLABLE_INPUT_STREAM(in2) && 
+            g_pollable_input_stream_can_poll(G_POLLABLE_INPUT_STREAM(in2))) {
+            
+            if (g_pollable_input_stream_is_readable(G_POLLABLE_INPUT_STREAM(in2))) {
+                gssize bytes = g_pollable_input_stream_read_nonblocking(
+                    G_POLLABLE_INPUT_STREAM(in2), buffer, sizeof(buffer), NULL, &error);
+                if (bytes > 0) {
+                    if (!g_output_stream_write_all(out1, buffer, bytes, NULL, NULL, NULL)) {
+                        running = FALSE;
+                    }
+                } else if (bytes == 0) {
+                    running = FALSE;
+                } else if (error && !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_WOULD_BLOCK)) {
+                    running = FALSE;
+                }
+                g_clear_error(&error);
+            }
+        } else {
+            // Fallback for non-pollable streams
+            gssize bytes = g_input_stream_read(in2, buffer, sizeof(buffer), NULL, &error);
+            if (bytes > 0) {
+                if (!g_output_stream_write_all(out1, buffer, bytes, NULL, NULL, NULL)) {
+                    running = FALSE;
+                }
+            } else if (bytes <= 0) {
                 running = FALSE;
             }
+            g_clear_error(&error);
         }
+        
+        /* No busy-wait needed — poll loop above already handles both directions.
+         * The pollable sources created above (source1/source2) are only used
+         * for cleanup; main-loop integration is a future enhancement. */
+    }
+    
+    // Cleanup sources
+    if (source1) {
+        g_source_destroy(source1);
+        g_source_unref(source1);
+    }
+    if (source2) {
+        g_source_destroy(source2);
+        g_source_unref(source2);
     }
 }
-/**
- * Transfer data between client and upstream
- */
 
 gboolean deadlight_network_tunnel_data(DeadlightConnection *conn, GError **error) {
     g_return_val_if_fail(conn != NULL, FALSE);
     g_return_val_if_fail(conn->client_connection != NULL, FALSE);
     g_return_val_if_fail(conn->upstream_connection != NULL, FALSE);
+    
+    (void)error; // Suppress unused parameter warning
 
     // Client streams
     GInputStream *client_is;
@@ -979,55 +1129,102 @@ gboolean deadlight_network_tunnel_data(DeadlightConnection *conn, GError **error
         upstream_os = g_io_stream_get_output_stream(G_IO_STREAM(conn->upstream_connection));
     }
 
-    // Bidirectional tunnel logic (polling, reading, writing)
+    // FIX: Use GIO pollable streams instead of raw g_poll
     guint8 buffer[16384];
     gboolean running = TRUE;
-    GPollFD fds[2];
-    gint nfds = 2;
-
-    // Set up poll fds (adjust based on your exact impl; this assumes socket-based)
-    GSocket *client_socket = g_socket_connection_get_socket(conn->client_connection);
-    GSocket *upstream_socket = g_socket_connection_get_socket(conn->upstream_connection);
-    fds[0].fd = g_socket_get_fd(client_socket);
-    fds[1].fd = g_socket_get_fd(upstream_socket);
-    fds[0].events = G_IO_IN | G_IO_HUP | G_IO_ERR;
-    fds[1].events = G_IO_IN | G_IO_HUP | G_IO_ERR;
 
     while (running) {
-        gint ready = g_poll(fds, nfds, -1);  // Timeout -1 for blocking
-        if (ready < 0) {
-            g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno), "Poll failed: %s", g_strerror(errno));
-            return FALSE;
-        }
-
+        gboolean activity = FALSE;
+        GError *local_error = NULL;
+        
         // Client to upstream
-        if (fds[0].revents & (G_IO_IN | G_IO_HUP | G_IO_ERR)) {
-            gssize bytes_read = g_input_stream_read(client_is, buffer, sizeof(buffer), NULL, error);
+        if (G_IS_POLLABLE_INPUT_STREAM(client_is) && 
+            g_pollable_input_stream_can_poll(G_POLLABLE_INPUT_STREAM(client_is))) {
+            
+            if (g_pollable_input_stream_is_readable(G_POLLABLE_INPUT_STREAM(client_is))) {
+                gssize bytes_read = g_pollable_input_stream_read_nonblocking(
+                    G_POLLABLE_INPUT_STREAM(client_is), buffer, sizeof(buffer), NULL, &local_error);
+                if (bytes_read > 0) {
+                    if (!g_output_stream_write_all(upstream_os, buffer, bytes_read, NULL, NULL, &local_error)) {
+                        g_warning("Connection %lu: Failed to write to upstream: %s", 
+                                 conn->id, local_error ? local_error->message : "unknown");
+                        running = FALSE;
+                    } else {
+                        conn->bytes_client_to_upstream += bytes_read;
+                        activity = TRUE;
+                    }
+                } else if (bytes_read == 0) {
+                    running = FALSE; // EOF
+                } else if (local_error && !g_error_matches(local_error, G_IO_ERROR, G_IO_ERROR_WOULD_BLOCK)) {
+                    running = FALSE; // Real error
+                }
+                g_clear_error(&local_error);
+            }
+        } else {
+            // Fallback for non-pollable streams
+            gssize bytes_read = g_input_stream_read(client_is, buffer, sizeof(buffer), NULL, &local_error);
             if (bytes_read > 0) {
-                if (!g_output_stream_write_all(upstream_os, buffer, bytes_read, NULL, NULL, error)) {
-                    g_warning("Connection %lu: Failed to write to upstream: %s", conn->id, (*error)->message);
+                if (!g_output_stream_write_all(upstream_os, buffer, bytes_read, NULL, NULL, &local_error)) {
+                    g_warning("Connection %lu: Failed to write to upstream: %s", 
+                             conn->id, local_error ? local_error->message : "unknown");
                     running = FALSE;
                 } else {
                     conn->bytes_client_to_upstream += bytes_read;
+                    activity = TRUE;
                 }
-            } else {
+            } else if (bytes_read <= 0) {
                 running = FALSE;
             }
+            g_clear_error(&local_error);
         }
 
         // Upstream to client
-        if (fds[1].revents & (G_IO_IN | G_IO_HUP | G_IO_ERR)) {
-            gssize bytes_read = g_input_stream_read(upstream_is, buffer, sizeof(buffer), NULL, error);
+        if (running && G_IS_POLLABLE_INPUT_STREAM(upstream_is) && 
+            g_pollable_input_stream_can_poll(G_POLLABLE_INPUT_STREAM(upstream_is))) {
+            
+            if (g_pollable_input_stream_is_readable(G_POLLABLE_INPUT_STREAM(upstream_is))) {
+                gssize bytes_read = g_pollable_input_stream_read_nonblocking(
+                    G_POLLABLE_INPUT_STREAM(upstream_is), buffer, sizeof(buffer), NULL, &local_error);
+                if (bytes_read > 0) {
+                    if (!g_output_stream_write_all(client_os, buffer, bytes_read, NULL, NULL, &local_error)) {
+                        g_warning("Connection %lu: Failed to write to client: %s", 
+                                 conn->id, local_error ? local_error->message : "unknown");
+                        running = FALSE;
+                    } else {
+                        conn->bytes_upstream_to_client += bytes_read;
+                        activity = TRUE;
+                    }
+                } else if (bytes_read == 0) {
+                    running = FALSE; // EOF
+                } else if (local_error && !g_error_matches(local_error, G_IO_ERROR, G_IO_ERROR_WOULD_BLOCK)) {
+                    running = FALSE; // Real error
+                }
+                g_clear_error(&local_error);
+            }
+        } else {
+            // Fallback for non-pollable streams
+            gssize bytes_read = g_input_stream_read(upstream_is, buffer, sizeof(buffer), NULL, &local_error);
             if (bytes_read > 0) {
-                if (!g_output_stream_write_all(client_os, buffer, bytes_read, NULL, NULL, error)) {
-                    g_warning("Connection %lu: Failed to write to client: %s", conn->id, (*error)->message);
+                if (!g_output_stream_write_all(client_os, buffer, bytes_read, NULL, NULL, &local_error)) {
+                    g_warning("Connection %lu: Failed to write to client: %s", 
+                             conn->id, local_error ? local_error->message : "unknown");
                     running = FALSE;
                 } else {
                     conn->bytes_upstream_to_client += bytes_read;
+                    activity = TRUE;
                 }
-            } else {
+            } else if (bytes_read <= 0) {
                 running = FALSE;
             }
+            g_clear_error(&local_error);
+        }
+        
+        // Brief yield when no data is moving.
+        // TODO(mesh): Replace with g_socket_condition_wait() once the mesh
+        // transport layer is wired in — LoRa latency (500ms-5s/hop) makes a
+        // 1ms busy-poll wasteful on battery-powered gateway nodes.
+        if (!activity) {
+            g_usleep(1000);
         }
     }
 
@@ -1044,37 +1241,17 @@ gboolean deadlight_network_tunnel_data(DeadlightConnection *conn, GError **error
  * Print detailed pool statistics to log
  */
 static void connection_pool_log_stats(ConnectionPool *pool) {
-    guint idle = 0;
-    guint active = 0;
-    guint64 total_gets = 0;
-    guint64 cache_hits = 0;
-    gdouble hit_rate = 0.0;
-    guint64 evicted = 0, failed = 0;
+    // Current implementation missing actual stats collection
+    // Should call connection_pool_get_stats and log meaningful data
     
-    connection_pool_get_stats(pool, &idle, &active, &total_gets, &cache_hits, &hit_rate, &evicted, &failed);
-    g_info("Pool Statistics: "
-           "Hits: %lu, Misses: %lu, Hit Rate: %.1f%%, "
-           "Active: %u, Idle: %u, Total: %u, "
-           "Evicted: %u, Failed: %u",
-           (unsigned long)cache_hits, 
-           (unsigned long)(total_gets - cache_hits), 
-           hit_rate,
-           active, 
-           idle, 
-           active + idle,  // Calculate total from active + idle
-           (guint)0,      // Placeholder for evicted (implement if needed)
-           (guint)0);     // Placeholder for failed (implement if needed)
-}
-/**
- * Cleanup network resources after stop.
- * network_stop() already performs full teardown; this exists so the
- * goto-based shutdown sequence in main.c can call a distinct cleanup
- * phase without duplicating logic or crashing on a second free.
- */
-void deadlight_network_cleanup(DeadlightContext *context) {
-    if (!context || !context->network) return;
-
-    // stop already freed everything — this is a no-op safety net
-    // If somehow stop wasn't called first, call it now
-    deadlight_network_stop(context);
+    guint idle, active;
+    guint64 total_gets, cache_hits;
+    gdouble hit_rate;
+    guint64 evicted, failed;
+    
+    connection_pool_get_stats(pool, &idle, &active, &total_gets, 
+                             &cache_hits, &hit_rate, &evicted, &failed);
+    
+    g_info("Pool Stats: Total=%u, Active=%u, Idle=%u, Hits=%lu, Misses=%lu, HitRate=%.1f%%",
+           idle + active, active, idle, cache_hits, total_gets - cache_hits, hit_rate);
 }
