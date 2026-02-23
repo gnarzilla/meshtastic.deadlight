@@ -147,7 +147,7 @@ require_auth=false
 
 [plugin.meshtastic]
 enabled = true
-serial_device = /dev/ttyUSB0        # or whatever your node shows
+serial_port = /dev/ttyACM0        # or whatever your node shows
 channel = LongFast
 custom_port = 257                   # safe private port
 

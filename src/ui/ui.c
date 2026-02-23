@@ -22,6 +22,21 @@ static int json_response(struct MHD_Connection *conn, const char *json)
     return ret;
 }
 
+/* ---------- Generic static file handler ---------- */
+static int handle_static_file(struct MHD_Connection *conn,
+                              const char *data,
+                              size_t len,
+                              const char *mime_type)
+{
+    struct MHD_Response *resp = MHD_create_response_from_buffer(
+        len, (void *)data, MHD_RESPMEM_MUST_COPY);
+    MHD_add_response_header(resp, "Content-Type", mime_type);
+    MHD_add_response_header(resp, "Cache-Control", "public, max-age=31536000"); // Cache 1 year
+    int ret = MHD_queue_response(conn, MHD_HTTP_OK, resp);
+    MHD_destroy_response(resp);
+    return ret;
+}
+
 /* ---------- API: /api/status ---------- */
 static enum MHD_Result
 handle_api_status(DeadlightContext *context, struct MHD_Connection *conn, const char *method)
@@ -85,13 +100,10 @@ handle_api_status(DeadlightContext *context, struct MHD_Connection *conn, const 
 /* ---------- Serve index.html ---------- */
 static int handle_root(struct MHD_Connection *conn)
 {
-    const char *html = (const char *)src_ui_index_html;
-    struct MHD_Response *resp = MHD_create_response_from_buffer(
-        src_ui_index_html_len, (void *)html, MHD_RESPMEM_MUST_COPY);
-    MHD_add_response_header(resp, "Content-Type", "text/html; charset=utf-8");
-    int ret = MHD_queue_response(conn, MHD_HTTP_OK, resp);
-    MHD_destroy_response(resp);
-    return ret;
+    return handle_static_file(conn, 
+                             (const char *)src_ui_index_html, 
+                             src_ui_index_html_len, 
+                             "text/html; charset=utf-8");
 }
 
 /* ---------- Main request dispatcher ---------- */
@@ -107,11 +119,28 @@ request_handler(void *cls,
 {
     (void)cls; (void)version; (void)upload_data; (void)upload_data_size; (void)con_cls;
 
-    
     DeadlightContext *context = cls;
+    
+    // Root
     if (strcmp(url, "/") == 0 && strcmp(method, "GET") == 0) {
         return handle_root(conn);
-    } 
+    }
+    
+    // Favicons
+    else if (strcmp(url, "/favicon.ico") == 0 && strcmp(method, "GET") == 0) {
+        return handle_static_file(conn,
+                                 (const char *)src_ui_favicon_ico,
+                                 src_ui_favicon_ico_len,
+                                 "image/x-icon");
+    }
+    else if (strcmp(url, "/favicon.png") == 0 && strcmp(method, "GET") == 0) {
+        return handle_static_file(conn,
+                                 (const char *)src_ui_favicon_png,
+                                 src_ui_favicon_png_len,
+                                 "image/png");
+    }
+    
+    // APIs
     else if (strcmp(url, "/api/status") == 0 && strcmp(method, "GET") == 0) {
         return handle_api_status(context, conn, method);
     }

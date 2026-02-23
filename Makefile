@@ -105,14 +105,26 @@ $(OBJDIR)/%.o: %.c
 	@mkdir -p $(dir $@)
 	@$(CC) $(ALL_CFLAGS) -c $< -o $@
 
+# ── UI Assets Generation ────────────────────────────────────────────────────
+ifeq ($(UI),1)
+
+UI_ASSETS = \
+	src/ui/index.html \
+	src/ui/favicon.ico \
+	src/ui/favicon.png
+
+src/ui/assets.c: $(UI_ASSETS)
+	@echo "Generating UI assets..."
+	@echo "/* Auto-generated UI assets */" > $@
+	@echo "" >> $@
+	@for asset in $(UI_ASSETS); do \
+		echo "Embedding $$asset..."; \
+		xxd -i $$asset >> $@; \
+		echo "" >> $@; \
+	done
+
 $(OBJDIR)/assets.o: src/ui/assets.c
 
-src/ui/assets.c: src/ui/index.html
-ifeq ($(UI),1)
-	@echo "Generating UI assets..."
-	@xxd -i $< > $@
-else
-	@:
 endif
 
 # Plugin builds
