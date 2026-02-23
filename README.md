@@ -1,37 +1,40 @@
-# Deadlight Meshtastic Proxy
+# deadmesh
 
-**Internet-over-LoRa: A practical bridge between Meshtastic mesh networks and the Internet**
+**Internet-over-LoRa: Update your blog from a can on a string from the smoldering rubble.**
 
-[![Meshtastic](https://meshtastic.deadlight.boo/favicon.ico)](https://meshtastic.deadlight.boo) [Project/Community Blog](https://meshtastic.deadlight.boo) · [Why This Exists](#why-this-exists) · [Getting Started](#getting-started) · [Hardware](#hardware) · [Usage](#usage) · [Configuration](#configuration) · [How It Works](#how-it-works) · [Real-World Use Cases](#real-world-use-cases) · [Performance](#performance) · [Roadmap](#roadmap) · [License](#license)
+Part of the [Deadlight ecosystem](https://deadlight.boo) — secure, performant, privacy-focused tools for resilient connectivity on mesh/satellite/spotty networks.
 
-![Deadlight-Mesh Web UI](src/assets/Deadlight-Mesh-webUI.gif)
+[![deadmesh](https://meshtastic.deadlight.boo/favicon.ico)](https://meshtastic.deadlight.boo) [Project Blog](https://meshtastic.deadlight.boo) · [Why This Exists](#why-this-exists) · [Getting Started](#getting-started) · [Hardware](#hardware) · [Dashboard](#dashboard) · [Usage](#usage) · [Configuration](#configuration) · [How It Works](#how-it-works) · [Real-World Use Cases](#real-world-use-cases) · [Performance](#performance) · [Roadmap](#roadmap) · [License](#license)
+
+![deadmesh Web UI](src/assets/Deadlight-Mesh-webUI.gif)
 
 ## Overview
 
-Deadlight Meshtastic Proxy transforms LoRa mesh networks into practical Internet gateways. Built on the [Deadlight Proxy](https://github.com/gnarzilla/proxy.deadlight) foundation, it adds transparent mesh networking capabilities that let any device on a Meshtastic mesh access standard Internet protocols including HTTP/HTTPS, email, DNS, FTP, as if they had normal connectivity.
+**deadmesh** transforms LoRa mesh networks into practical Internet gateways. Built on the [proxy.deadlight](https://github.com/gnarzilla/proxy.deadlight) foundation, it adds transparent mesh networking that lets any device on a Meshtastic mesh access standard Internet protocols — HTTP/HTTPS, email, DNS, FTP — as if they had normal connectivity.
 
 **What makes this different from other mesh solutions:**
-- Standard protocols work unchanged (browse websites, send email, use apps)
-- Transparent to applications (no special client software needed)
+- Standard protocols work unchanged — browse websites, send email, use apps
+- Transparent to applications — no special client software needed
 - Automatic fragmentation and reassembly for mesh transport
-- Full MITM proxy capabilities for traffic inspection/modification
+- Full MITM proxy capabilities for traffic inspection and caching
 - Works with existing Meshtastic hardware and networks
 - Truly off-grid: solar-powered nodes can provide connectivity across kilometers
+- Real-time gateway dashboard with SSE streaming, embedded in the binary
 
-Think of it as giving your Meshtastic network the capabilities of a satellite terminal, but running on $30 hardware and zero monthly fees.
+Think of it as giving your Meshtastic network the capabilities of a satellite terminal, running on $30 hardware with zero monthly fees.
 
-![Deadlight Meshtastic Proxy (no lora)](src/assets/output.gif)
+![deadmesh proxy (no lora)](src/assets/output.gif)
 
 ## Why This Exists
 
-Meshtastic networks are incredible for messaging and telemetry, but they weren't designed for general Internet access. Each protocol (HTTP, SMTP, DNS) would need custom mesh-aware implementations. This creates a chicken-and-egg problem: applications won't add mesh support without users, users won't adopt mesh without applications.
+Meshtastic networks are incredible for messaging and telemetry, but they weren't designed for general Internet access. Each protocol (HTTP, SMTP, DNS) would need custom mesh-aware implementations — a chicken-and-egg problem where applications won't add mesh support without users, and users won't adopt mesh without applications.
 
-Deadlight solves this by sitting in the middle:
-1. Mesh side: Speaks fluent Meshtastic (protobuf over LoRa serial)
-2. Internet side: Speaks every protocol your applications already use
-3. Bridges transparently: Fragments outgoing requests, reassembles incoming responses
+deadmesh sits in the middle:
+1. **Mesh side**: Speaks fluent Meshtastic (protobuf over LoRa serial)
+2. **Internet side**: Speaks every protocol your applications already use
+3. **Bridges transparently**: Fragments outgoing requests, reassembles incoming responses
 
-**Result**: Your mesh network suddenly works with everything, email clients, web browsers, update tools, API services, all without modifying a single line of application code.
+**Result**: Your mesh network works with everything — email clients, web browsers, update tools, API services — without modifying a single line of application code.
 
 ### Critical Scenarios This Enables
 
@@ -43,28 +46,29 @@ Deadlight solves this by sitting in the middle:
 
 ## Features
 
-- **Universal Protocol Support**: HTTP/HTTPS, SMTP/IMAP, SOCKS5, WebSocket, FTP, DNS—if it runs over TCP/IP, it works
+- **Universal Protocol Support**: HTTP/HTTPS, SMTP/IMAP, SOCKS4/5, WebSocket, FTP — if it runs over TCP/IP, it works
 - **Transparent TLS Interception**: Inspect and cache HTTPS traffic to minimize mesh bandwidth
 - **Intelligent Fragmentation**: Automatically chunks large requests/responses into ~220-byte Meshtastic packets
 - **Store-and-Forward**: Delay-tolerant networking handles intermittent mesh connectivity
-- **Connection Pooling**: Reuses upstream connections to reduce mesh overhead
-- **Plugin Extensibility**: Add custom filters, caching, compression, or protocol handlers
-- **Hardware Flexibility**: Works with USB serial, Bluetooth, or TCP-connected radios
+- **Connection Pooling**: Reuses upstream connections aggressively to reduce LoRa airtime cost
+- **Plugin Extensibility**: Compression, caching, rate limiting, custom protocol handlers
+- **Hardware Flexibility**: USB serial, Bluetooth, or TCP-connected radios
 - **Zero-Config Detection**: Auto-discovers Meshtastic devices on serial ports
+- **Embedded Dashboard**: Real-time gateway monitor with SSE streaming, self-contained in the binary — no external assets
 
 ## Getting Started
 
 ### Prerequisites
 
 **Software**:
-- Linux system (Raspberry Pi, x86 server, or ESP32-S3 with adequate RAM)
+- Linux (Raspberry Pi, x86 server, or similar)
 - GLib 2.0+, OpenSSL 1.1+
 - GCC or Clang
 
-**Hardware** (see [Hardware](#hardware) section for details):
+**Hardware** (see [Hardware](#hardware) for details):
 - Meshtastic-compatible LoRa radio (ESP32-based recommended)
 - Gateway node: Raspberry Pi or similar with Internet connection
-- Client nodes: Any Meshtastic device (phone, handheld, custom)
+- Client nodes: any Meshtastic device (phone, handheld, custom)
 
 ### Quick Install
 
@@ -77,12 +81,8 @@ Deadlight solves this by sitting in the middle:
 
 2. **Install CA certificate** (for HTTPS interception):
    ```bash
-   # The proxy generates these on first run:
-   # /etc/deadlight/ca.crt (install on clients)
-   # /etc/deadlight/ca.key (keep secret)
-   
-   # Debian/Ubuntu
-   sudo cp /etc/deadlight/ca/ca.crt /usr/local/share/ca-certificates/deadlight-mesh.crt
+   # Generated on first run at ~/.deadmesh/ca/
+   sudo cp ~/.deadmesh/ca/ca.crt /usr/local/share/ca-certificates/deadmesh.crt
    sudo update-ca-certificates
    ```
 
@@ -90,17 +90,21 @@ Deadlight solves this by sitting in the middle:
    ```bash
    # Most devices appear as /dev/ttyACM0 or /dev/ttyUSB0
    ls -l /dev/tty*
-   
-   # Give yourself permission (or run as root)
+
+   # Add yourself to the dialout group (or run as root)
    sudo usermod -a -G dialout $USER
    ```
 
-4. **Run the proxy**:
+4. **Run the gateway**:
    ```bash
-   sudo ./bin/deadlight -c meshtastic.conf
+   sudo ./bin/deadmesh -c deadmesh.conf
+   # or with verbose output:
+   sudo ./bin/deadmesh -c deadmesh.conf -v
    ```
 
-5. **Configure mesh clients** to use the gateway's mesh address as their proxy (see [Usage](#usage)).
+5. **Open the dashboard** at `http://localhost:8081` to monitor gateway activity.
+
+6. **Configure mesh clients** to use the gateway's address as their proxy (see [Usage](#usage)).
 
 ## Hardware
 
@@ -114,7 +118,7 @@ Deadlight solves this by sitting in the middle:
 
 **Option 2: ESP32-S3 All-in-One** (compact)
 - Lilygo T-Deck or T-Watch S3
-- 8MB+ PSRAM required for Deadlight
+- 8MB+ PSRAM required
 - Built-in LoRa radio and display
 - Power: LiPo battery + solar panel
 
@@ -129,23 +133,43 @@ Deadlight solves this by sitting in the middle:
 Any Meshtastic-compatible device works:
 - **Android/iOS**: Meshtastic app on phone (Bluetooth to radio)
 - **Handheld**: RAK WisBlock, Lilygo T-Echo, Heltec LoRa 32
-- **Custom**: ESP32 + LoRa module + Deadlight client build
+- **Custom**: ESP32 + LoRa module + deadmesh client build
 
 ### Radio Configuration
 
 For best Internet gateway performance:
-```
+```bash
 # In Meshtastic app or CLI
 meshtastic --set lora.region US --set lora.modem_preset LONG_FAST
-meshtastic --set lora.tx_power 30  # Maximum (check local regulations)
+meshtastic --set lora.tx_power 30  # Check local regulations
 meshtastic --set lora.hop_limit 3  # Adjust for network size
 ```
+
+## Dashboard
+
+deadmesh ships with a real-time gateway dashboard embedded directly in the binary — no external files, no dependencies, nothing to serve separately.
+
+**Access**: `http://localhost:8081` (configurable via `plugin.stats.web_port`)
+
+**Features**:
+- Live stats: active links, packets relayed, bytes bridged, gateway uptime
+- Gateway log stream via SSE (Server-Sent Events) — zero polling
+- Mesh links panel showing active protocol connections
+- Green RF terminal aesthetic with antenna favicon in browser tab
+- Auto-scroll log with toggle
+
+Build with dashboard support:
+```bash
+make clean && make UI=1
+```
+
+The dashboard uses the same green-on-black theme as the project identity. When mesh-layer data (node RSSI, hop counts, LoRa packet stats) is wired to the API, the Mesh Links panel will populate with per-node telemetry.
 
 ## Usage
 
 ### Basic Configuration
 
-Edit `meshtastic.conf`:
+Create `deadmesh.conf` (or let it auto-generate on first run):
 
 ```ini
 [core]
@@ -157,20 +181,21 @@ log_level = info
 enabled = true
 serial_port = /dev/ttyACM0
 baud_rate = 115200
-mesh_node_id = 0x12345678  # Your gateway's Meshtastic ID
-fragment_size = 220        # Max payload per packet
-ack_timeout = 30000        # 30 seconds for mesh ACKs
+mesh_node_id = 0x00000000   ; 0 = auto-detect
+fragment_size = 220          ; max payload bytes per LoRa packet
+ack_timeout = 30000          ; ms — 30s for mesh ACKs
 max_retries = 3
+hop_limit = 3
 
 [ssl]
-enable_interception = true
-ca_cert = /etc/deadlight/ca/ca.crt
-ca_key = /etc/deadlight/ca/ca.key
+enabled = true
+ca_cert_file = ~/.deadmesh/ca/ca.crt
+ca_key_file = ~/.deadmesh/ca/ca.key
 
 [network]
-pool_max_per_host = 5      # Reuse connections aggressively
-pool_idle_timeout = 600    # Keep idle connections longer
-upstream_timeout = 120000  # Allow slow mesh responses
+connection_pool_size = 5        ; reuse connections aggressively
+connection_pool_timeout = 600   ; hold idle connections longer
+upstream_timeout = 120          ; allow slow mesh responses (seconds)
 ```
 
 ### Client Setup
@@ -179,87 +204,112 @@ upstream_timeout = 120000  # Allow slow mesh responses
 
 ```bash
 # Linux/Mac
-export http_proxy=mesh://gateway-node-id:8080
-export https_proxy=mesh://gateway-node-id:8080
+export http_proxy=http://gateway-ip:8080
+export https_proxy=http://gateway-ip:8080
 
-# Or in applications:
-# HTTP Proxy: gateway-node-id port 8080
-# SOCKS5: gateway-node-id port 8080
+# Or point any application at:
+# HTTP Proxy: gateway-ip  port 8080
+# SOCKS5:     gateway-ip  port 8080
 ```
 
-**On Android** (using Meshtastic app + ProxyDroid):
+**On Android** (Meshtastic app + ProxyDroid):
 1. Install ProxyDroid
-2. Set proxy to gateway node's mesh ID
-3. Connect Meshtastic app via Bluetooth
+2. Set proxy host to gateway IP, port 8080
+3. Connect Meshtastic app via Bluetooth to your radio
 
 ### Testing
 
 ```bash
-# From mesh client node
-curl -x mesh://gateway:8080 http://example.com
+# HTTP through gateway
+curl -x http://localhost:8080 http://example.com
 
-# Send email via mesh
-curl -x mesh://gateway:8080 \
+# HTTPS (with CA installed)
+curl --cacert ~/.deadmesh/ca/ca.crt -x http://localhost:8080 https://example.com
+
+# SOCKS5
+curl --socks5 localhost:8080 http://example.com
+
+# Send email via mesh relay
+curl -x http://localhost:8080 \
   --mail-from sender@example.com \
   --mail-rcpt recipient@example.com \
   --upload-file message.txt \
   smtp://smtp.gmail.com:587
 
-# SOCKS5 for SSH over mesh
-ssh -o ProxyCommand="nc -X 5 -x gateway:8080 %h %p" user@remote-server
+# SSH over mesh (SOCKS5 proxy)
+ssh -o ProxyCommand="nc -X 5 -x localhost:8080 %h %p" user@remote-server
 ```
 
 ## Configuration
 
+### Full Reference
+
+deadmesh auto-generates a fully commented `deadmesh.conf` on first run. Key sections:
+
+**`[core]`** — port, bind address, max connections, log level, worker threads
+
+**`[meshtastic]`** — serial port, baud rate, node ID, channel PSK, fragment size, ACK timeout, retries, hop limit, gateway announcement
+
+**`[ssl]`** — CA cert/key paths, cipher suites, certificate cache
+
+**`[network]`** — connection pool size/timeout, upstream timeout, DNS, keepalive
+
+**`[vpn]`** — optional TUN/TAP gateway for routing entire device traffic through mesh
+
+**`[plugins]`** — enable/disable individual plugins, plugin directory, autoload list
+
+**`[plugin.compressor]`** — compression algorithms, minimum size threshold (strongly recommended over LoRa)
+
+**`[plugin.cache]`** — cache directory, max size, TTL (reduces repeat mesh traffic significantly)
+
+**`[plugin.ratelimiter]`** — priority queuing (SMTP/IMAP/DNS over video/images)
+
+**`[plugin.stats]`** — dashboard port, update interval, history size
+
 ### Optimizing for Mesh Performance
 
-**Bandwidth Conservation**:
+**Bandwidth conservation**:
 ```ini
-[plugins]
-# Enable aggressive compression
-compressor.enabled = true
-compressor.min_size = 512
-compressor.algorithms = gzip,brotli
+[plugin.compressor]
+enabled = true
+min_size = 512
+algorithms = gzip,brotli
 
-# Cache aggressively to reduce mesh traffic
-cache.enabled = true
-cache.max_size_mb = 500
-cache.ttl_hours = 24
+[plugin.cache]
+enabled = true
+max_size_mb = 500
+ttl_hours = 24
 ```
 
-**Latency Tolerance**:
+**Latency tolerance** (multi-hop paths):
 ```ini
 [meshtastic]
-# Longer timeouts for multi-hop paths
 ack_timeout = 60000
 max_retries = 5
 
 [network]
-# Don't timeout on slow mesh responses
-upstream_timeout = 300000  # 5 minutes
-connection_timeout = 180000  # 3 minutes
+upstream_timeout = 300
+connection_pool_timeout = 600
 ```
 
-**Priority Shaping**:
+**Priority shaping**:
 ```ini
-[plugins]
-ratelimiter.enabled = true
-# Reserve bandwidth for critical services
-ratelimiter.priority_high = smtp,imap,dns
-ratelimiter.priority_low = http_video,http_images
+[plugin.ratelimiter]
+enabled = true
+priority_high = smtp,imap,dns
+priority_low = http_video,http_images
 ```
 
-### Advanced: Multi-Gateway Setup
+### Multi-Gateway Setup
 
-For redundancy, run multiple gateways:
-
+For redundancy across a large mesh:
 ```ini
 [meshtastic]
 gateway_mode = true
-announce_interval = 300  # Announce availability every 5 min
-prefer_local = true      # Route via nearest gateway
-load_balance = true      # Distribute across gateways
+announce_interval = 300
 ```
+
+Multiple deadmesh gateways on the same channel will announce themselves, allowing clients to route via the nearest available gateway.
 
 ## How It Works
 
@@ -267,68 +317,64 @@ load_balance = true      # Distribute across gateways
 
 ```
 ┌─────────────┐                  ┌──────────────┐                ┌──────────┐
-│ Mesh Client │                  │   Deadlight  │                │ Internet │
-│   (Phone)   │  LoRa Packets    │   Gateway    │   TCP/   |   IP        │ Services │
-│             ├─────────────────>│              ├───────────────>│          │
-│ Meshtastic  │  (868/915 MHz)   │ - Fragment   │                │  HTTP       │
-│     App     │                  │ - Reassemble │                │  SMTP       │
-│             │<─────────────────┤ - TLS Proxy  │<───────────────┤  IMAP    │
-└─────────────┘                  └──────────────┘                └──────────┘
-                                         │
-                                         │ Also bridges:
-                                         ├─> Other mesh nodes
-                                         ├─> Offline message store
-                                         └─> Satellite uplink (if available)
+│ Mesh Client │  LoRa Packets    │   deadmesh   │  TCP/IP        │ Internet │
+│  (Phone /   ├─────────────────>│   Gateway    ├───────────────>│ Services │
+│  Handheld)  │  (868/915 MHz)   │              │                │          │
+│             │                  │ - Fragment   │                │  HTTP    │
+│ Meshtastic  │                  │ - Reassemble │                │  SMTP    │
+│    App      │<─────────────────┤ - TLS Proxy  │<───────────────┤  IMAP   │
+└─────────────┘                  │ - Cache      │                └──────────┘
+                                 │ - Compress   │
+                                 └──────┬───────┘
+                                        │
+                                        ├─> Other mesh nodes
+                                        ├─> Offline message store
+                                        └─> Satellite uplink (optional)
 ```
 
 ### Packet Flow
 
-1. **Request Fragmentation**:
-   ```
-   HTTP GET request (1500 bytes)
-   └─> Split into 7 Meshtastic packets (~220 bytes each)
-   └─> Each tagged with sequence number + session ID
-   └─> Sent hop-by-hop through mesh to gateway
-   ```
+**Request (client → Internet)**:
+```
+HTTP GET request (1500 bytes)
+└─> Split into 7 LoRa packets (~220 bytes each)
+└─> Each tagged with sequence number + session ID
+└─> Sent hop-by-hop through mesh to gateway
+└─> Gateway reassembles → proxies to Internet
+```
 
-2. **Gateway Reassembly**:
-   ```
-   Gateway receives packets out-of-order
-   └─> Buffers and sorts by sequence number
-   └─> Detects missing packets, requests retransmit
-   └─> Reassembles into original HTTP request
-   └─> Proxies to Internet normally
-   ```
-
-3. **Response Fragmentation**:
-   ```
-   HTTP response (50KB HTML)
-   └─> Gateway fragments into ~230 packets
-   └─> Sends with flow control (wait for ACKs)
-   └─> Client reassembles and delivers to application
-   ```
+**Response (Internet → client)**:
+```
+HTTP response (50KB HTML)
+└─> Compressed if plugin.compressor enabled (~5-10KB)
+└─> Cached if cacheable (saves future airtime)
+└─> Fragmented into LoRa packets with flow control
+└─> Client reassembles → delivers to application
+```
 
 ### Protocol Detection
 
-Deadlight auto-detects protocols by inspecting initial bytes:
-- `GET / HTTP/1.1` → HTTP handler → Fragment and forward
-- `CONNECT example.com:443` → HTTPS tunnel → TLS interception optional
-- `EHLO` → SMTP handler → Email relay
-- `\x05` → SOCKS5 handler → Transparent tunneling
+deadmesh auto-detects protocols by inspecting initial bytes — no configuration needed:
+
+| Initial bytes | Protocol | Handler |
+|---|---|---|
+| `GET / HTTP/1.1` | HTTP | Fragment and forward |
+| `CONNECT host:443` | HTTPS tunnel | Optional TLS interception |
+| `EHLO` / `HELO` | SMTP | Email relay |
+| `A001 NOOP` | IMAP | Mail client support |
+| `\x05` | SOCKS5 | Transparent tunneling |
+| `\x04` | SOCKS4 | Legacy tunneling |
 
 ### Security Model
 
 **Encryption layers**:
-1. **LoRa PHY**: AES-256 encryption at Meshtastic layer
+1. **LoRa PHY**: AES-256 at the Meshtastic layer (channel PSK)
 2. **TLS**: End-to-end between client and final destination
-3. **Proxy MITM** (optional): Deadlight can terminate TLS for caching/inspection
+3. **Proxy MITM** (optional): deadmesh terminates TLS for caching/inspection — requires clients to trust the gateway CA
 
-**Trust model**:
-- Gateway has root CA (can inspect HTTPS if enabled)
-- Mesh uses Meshtastic's channel encryption (PSK)
-- Clients trust gateway CA (install certificate)
+**Trust model**: Gateway holds the root CA. Mesh uses Meshtastic channel encryption. Clients trust the gateway CA by installing `ca.crt`.
 
-**Privacy**: Mesh node IDs are pseudonymous. For operational security in sensitive deployments, use throwaway node IDs and rotate channel keys.
+**Privacy**: Mesh node IDs are pseudonymous. For operational security in sensitive deployments, rotate node IDs and channel keys regularly, and avoid PII in mesh metadata.
 
 ## Real-World Use Cases
 
@@ -336,43 +382,31 @@ Deadlight auto-detects protocols by inspecting initial bytes:
 
 **Scenario**: Earthquake destroys cell infrastructure
 
-**Setup**:
-- Solar-powered Deadlight gateway at field hospital (has satellite uplink)
-- Rescue teams carry Meshtastic handhelds (10km range)
-- Coordinate via email, share maps, update databases
+**Setup**: Solar-powered deadmesh gateway at field hospital (satellite uplink). Rescue teams carry Meshtastic handhelds (10km range per hop). Coordinate via email, share maps, update databases.
 
-**Result**: Teams stay connected across 50+ square km with zero functioning infrastructure.
+**Result**: Teams stay connected across 50+ km² with zero functioning infrastructure.
 
 ### Rural Community Internet
 
-**Scenario**: Village 30km from nearest fiber connection
+**Scenario**: Village 30km from nearest fiber
 
-**Setup**:
-- One gateway node at village center (WiMAX or satellite backhaul)
-- Residents install Meshtastic radios on roofs
-- Multi-hop mesh covers entire valley
+**Setup**: One gateway at village center (WiMAX or satellite backhaul). Residents install Meshtastic radios on roofs. Multi-hop mesh covers entire valley.
 
-**Result**: 100+ households share single Internet connection. Cost: ~$50 per household for radio, no monthly fees.
+**Result**: 100+ households share a single Internet connection. Hardware cost ~$50/household, no monthly fees.
 
-### Protest/Festival Network
+### Protest / Festival Network
 
-**Scenario**: Large gathering needs coordination without relying on government-controlled networks
+**Scenario**: Large gathering needs coordination without government-controlled infrastructure
 
-**Setup**:
-- Organizers carry Deadlight gateways with LTE failover
-- Attendees use Meshtastic app on phones (Bluetooth to radios)
-- Network disappears when powered down (no logs, no traces)
+**Setup**: Organizers carry deadmesh gateways with LTE failover. Attendees use Meshtastic app on phones. Network disappears forensically when powered down.
 
-**Result**: Thousands communicate freely. Network evaporates forensically when disassembled.
+**Result**: Thousands communicate freely. No persistent logs, no fixed infrastructure to seize.
 
 ### Journalist in Blackout Zone
 
 **Scenario**: Government shuts down Internet during protests
 
-**Setup**:
-- Journalist has Meshtastic radio + Deadlight on laptop
-- Connects to mesh gateway run by colleague 15km away (who has working connection)
-- Files stories via mesh SMTP relay
+**Setup**: Journalist has Meshtastic radio + deadmesh on laptop. Connects to gateway run by colleague 15km away (who has connectivity). Files stories via mesh SMTP relay.
 
 **Result**: Censorship bypassed. Reports reach editors despite blackout.
 
@@ -380,90 +414,100 @@ Deadlight auto-detects protocols by inspecting initial bytes:
 
 ### Throughput Expectations
 
-**LoRa Physical Layer** (LONG_FAST preset):
+**LoRa physical layer** (LONG_FAST preset):
 - Raw bitrate: ~5.5 kbps
-- Effective throughput: ~3-4 kbps (after protocol overhead)
-- Latency: 500ms - 5s per hop
+- Effective throughput: ~3-4 kbps after protocol overhead
+- Latency: 500ms–5s per hop
 
-**Real-World Application Performance**:
-- **Email**: 10-20 emails/minute (text-heavy)
+**Real-world application performance**:
+- **Email**: 10-20 messages/minute (text)
 - **Web browsing**: 30-60 seconds per page (with caching)
-- **DNS**: ~2 seconds per lookup (cache aggressively!)
+- **DNS**: ~2 seconds per lookup (cache aggressively)
 - **API calls**: 5-10 seconds per request
 - **File transfer**: ~400 bytes/sec (~1.4 MB/hour)
 
 **Optimization tips**:
-- Enable compression (3-10x improvement for text)
-- Use image proxies (reduce image sizes before meshing)
-- Cache everything possible (DNS, API responses, static assets)
-- Batch requests (avoid chatty protocols)
+- Enable compression — 3-10x improvement for text content
+- Enable caching — repeat requests cost zero airtime
+- Use image proxies — reduce image sizes before they hit the mesh
+- Batch requests — avoid chatty protocols
 
-### Scaling Considerations
+### Scaling
 
-**Single Gateway**:
-- Handles 10-20 concurrent mesh clients comfortably
-- Limited by LoRa airtime regulations (1% duty cycle in EU)
+**Single gateway**: 10-20 concurrent mesh clients comfortably. EU duty cycle regulations (1% airtime) are typically the binding constraint.
 
-**Multi-Gateway Mesh**:
-- Horizontally scalable (add more gateways = more capacity)
-- Load balances automatically across available gateways
+**Multi-gateway**: Horizontally scalable. Gateways announce availability; clients route via nearest. Adding gateways directly adds capacity.
 
-**Bottlenecks**:
-1. LoRa duty cycle (legal limit on transmission time)
-2. Mesh hop count (>4 hops = diminishing returns)
-3. Gateway uplink bandwidth (satellite is typically the constraint)
+**Bottlenecks in order**: LoRa duty cycle → mesh hop count (>4 hops = diminishing returns) → gateway uplink bandwidth.
 
 ## Roadmap
 
-### v1.1 (Q1 2026)
-- Adaptive fragmentation (adjust packet size based on mesh conditions)
-- Intelligent retry with exponential backoff
+### v1.1 (Q2 2026)
+- Adaptive fragmentation based on live mesh conditions
+- Exponential backoff retry
 - Pre-fetching for common resources
-- Android client app (native Deadlight on-device)
+- Android client app (native deadmesh on-device)
+- Node topology visualization in dashboard
 
-### v1.2 (Q2 2026)
+### v1.2 (Q3 2026)
 - Multi-gateway coordination protocol
 - Offline message queue (store-and-forward when gateway unreachable)
-- Bandwidth shaping per client/protocol
-- WebRTC signaling over mesh (for peer-to-peer voice/video)
+- Per-client/protocol bandwidth shaping
+- WebRTC signaling over mesh (peer-to-peer voice/video)
+- Per-node RSSI, hop count, LoRa stats in dashboard
 
 ### v2.0 (Future)
 - Full IPv6 support
-- Meshtastic firmware integration (run Deadlight directly on ESP32)
+- Meshtastic firmware integration (run deadmesh directly on ESP32)
 - Satellite backhaul optimization (Starlink, Iridium)
-- Machine learning for mesh route prediction
+- Mesh route prediction
 
 ## Contributing
 
-This is a specialized fork of [Deadlight Proxy](https://github.com/gnarzilla/proxy.deadlight). Contributions welcome:
+deadmesh is a specialized component of the [Deadlight ecosystem](https://deadlight.boo), built on [proxy.deadlight](https://github.com/gnarzilla/proxy.deadlight). Contributions welcome:
 
 - **Protocol optimizations**: Improve mesh efficiency
-- **Hardware testing**: Validate on different radio platforms
-- **Real-world deployments**: Share your use cases and lessons learned
-- **Documentation**: Especially non-English guides for global use
+- **Hardware testing**: Validate on different radio platforms  
+- **Real-world deployments**: Share use cases and lessons learned
+- **Documentation**: Non-English guides especially valuable for global deployments
 
 See [CONTRIBUTING.md](docs/CONTRIBUTING.md) for guidelines.
 
 ## Support & Community
 
-- **Issues**: [GitHub Issues](https://github.com/gnarzilla/deadlight-meshtastic/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/gnarzilla/deadlight-meshtastic/discussions)
+- **Issues**: [GitHub Issues](https://github.com/gnarzilla/meshtastic.deadlight/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/gnarzilla/meshtastic.deadlight/discussions)
 - **Matrix**: `#deadlight-mesh:matrix.org`
-- **Development**: [ko-fi/gnarzilla](https://ko-fi.com/gnarzilla)
+- **Blog**: [meshtastic.deadlight.boo](https://meshtastic.deadlight.boo)
+- **Support development**: [ko-fi/gnarzilla](https://ko-fi.com/gnarzilla)
+
+## Deadlight Ecosystem
+
+deadmesh is one layer of a modular stack:
+
+| Project | Lang | Role |
+|---|---|---|
+| [proxy.deadlight](https://github.com/gnarzilla/proxy.deadlight) | C | SMTP/SOCKS/HTTP/VPN proxy foundation |
+| **deadmesh** (this) | C | LoRa-to-Internet mesh gateway |
+| [blog.deadlight](https://deadlight.boo) | JS | <10KB pages, email posting, edge-first |
+| [vault.deadlight](https://github.com/gnarzilla/vault.deadlight) | C | Offline credential store, proxy integration |
+| [deadlight-bootstrap](https://v1.deadlight.boo) | JS | Cloudflare Workers + D1 framework |
+
+Each component works standalone but the stack is designed to thrive together — blog.deadlight posting over deadmesh via proxy.deadlight with vault.deadlight managing credentials, all running on solar-powered hardware in a field somewhere.
 
 ## Legal & Safety
 
-**Radio Regulations**: LoRa operates in license-free ISM bands, but transmission power and duty cycle are regulated. Ensure compliance with your local regulations (FCC Part 15 in US, ETSI EN 300-220 in EU).
+**Radio regulations**: LoRa operates in license-free ISM bands, but transmission power and duty cycle are regulated. Check your local rules (FCC Part 15 in US, ETSI EN 300-220 in EU).
 
-**Encryption Export**: This software includes strong cryptography. Check export restrictions if deploying internationally.
+**Encryption export**: This software includes strong cryptography. Check export restrictions before deploying internationally.
 
-**Responsible Use**: This tool can bypass censorship and provide communication in emergencies. It can also be misused. Use ethically and legally. The authors are not responsible for misuse.
+**Responsible use**: This tool can bypass censorship and enable communication in emergencies. It can also be misused. Use ethically and legally. The authors are not responsible for misuse.
 
-**Privacy Notice**: Meshtastic mesh networks are pseudonymous, not anonymous. For operational security in high-risk environments, use proper opsec practices (rotate node IDs, use ephemeral keys, avoid PII in mesh metadata).
+**Privacy**: Meshtastic mesh networks are pseudonymous, not anonymous. For operational security in high-risk environments: rotate node IDs, use ephemeral channel keys, avoid PII in mesh metadata.
 
 ## License
 
-MIT License – see [LICENSE](docs/LICENSE)
+MIT License — see [LICENSE](docs/LICENSE)
 
 Includes:
 - [Meshtastic Protobufs](https://github.com/meshtastic/protobufs) (GPL v3)
@@ -471,4 +515,4 @@ Includes:
 
 ---
 
-**Status**: testing-ready v1.0.0 | **Maintained by**: [@gnarzilla](https://github.com/gnarzilla)
+**Status**: v1.0.0 testing-ready | **Maintained by**: [@gnarzilla](https://github.com/gnarzilla) | [deadlight.boo](https://deadlight.boo)
