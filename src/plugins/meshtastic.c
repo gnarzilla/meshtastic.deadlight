@@ -96,6 +96,48 @@ static void handle_incoming_frame(MeshtasticPlugin *mp,
  * Serial helpers
  * ───────────────────────────────────────────────────────────── */
 
+ /* Send the initial "want_config" handshake to start the serial API stream */
+static gboolean send_want_config(MeshtasticPlugin *mp) {
+    if (mp->serial_fd < 0) return FALSE;
+
+    /* Build ToRadio with want_config_id set to a non-zero value */
+    meshtastic_ToRadio to_radio = meshtastic_ToRadio_init_default;
+    to_radio.which_payload_variant = meshtastic_ToRadio_want_config_id_tag;
+    to_radio.want_config_id = 0xDEAD1234;  /* Any non-zero value */
+
+    /* Encode protobuf */
+    uint8_t pb_buf[128];
+    pb_ostream_t stream = pb_ostream_from_buffer(pb_buf, sizeof(pb_buf));
+    if (!pb_encode(&stream, meshtastic_ToRadio_fields, &to_radio)) {
+        g_warning("Meshtastic: failed to encode want_config: %s",
+                  PB_GET_ERROR(&stream));
+        return FALSE;
+    }
+
+    /* Apply serial framing (0x94 0xC3 + length + payload) */
+    uint8_t frame_buf[MESH_FRAME_MAX_TOTAL];
+    size_t frame_len = mesh_frame_encode(pb_buf,
+                                          (uint16_t)stream.bytes_written,
+                                          frame_buf, sizeof(frame_buf));
+    if (frame_len == 0) {
+        g_warning("Meshtastic: failed to frame want_config");
+        return FALSE;
+    }
+
+    ssize_t written = write(mp->serial_fd, frame_buf, frame_len);
+    if (written < 0 || (size_t)written != frame_len) {
+        g_warning("Meshtastic: failed to write want_config: %s",
+                  g_strerror(errno));
+        return FALSE;
+    }
+
+    /* Flush any stale data */
+    tcflush(mp->serial_fd, TCIFLUSH);
+
+    g_info("Meshtastic: sent want_config handshake (%zu bytes)", frame_len);
+    return TRUE;
+}
+
 static int baud_constant(int baud_rate) {
     switch (baud_rate) {
         case 9600:   return B9600;
@@ -187,8 +229,6 @@ static gboolean meshtastic_init(DeadlightContext *context) {
     if (mp->serial_fd < 0) {
         g_warning("Meshtastic: failed to open serial port %s — "
                   "is the radio connected?", mp->serial_device);
-        /* Don't hard-fail — let deadmesh start without radio,
-         * operator can reconnect and send SIGHUP to reload config. */
         mp->serial_fd = -1;
     } else {
         g_info("Meshtastic: opened %s at %d baud (fd=%d)",
@@ -197,6 +237,14 @@ static gboolean meshtastic_init(DeadlightContext *context) {
 
     g_mutex_init(&mp->write_mutex);
     mp->running = TRUE;
+
+    /* Send handshake to start serial API stream */
+    if (mp->serial_fd >= 0) {
+        if (!send_want_config(mp)) {
+            g_warning("Meshtastic: want_config handshake failed — "
+                      "device may not stream packets");
+        }
+    }
 
     /* Start reader thread only if we have a valid fd */
     if (mp->serial_fd >= 0) {
@@ -305,11 +353,9 @@ static gpointer reader_thread_func(gpointer user_data) {
 /* ─────────────────────────────────────────────────────────────
  * Incoming frame handler
  * ───────────────────────────────────────────────────────────── */
-
 static void handle_incoming_frame(MeshtasticPlugin *mp,
                                    DeadlightContext *context,
                                    const MeshFrame *frame) {
-    /* Decode FromRadio */
     meshtastic_FromRadio from_radio = meshtastic_FromRadio_init_default;
     pb_istream_t istream = pb_istream_from_buffer(frame->payload, frame->len);
 
@@ -319,21 +365,88 @@ static void handle_incoming_frame(MeshtasticPlugin *mp,
         return;
     }
 
-    if (from_radio.which_payload_variant != meshtastic_FromRadio_packet_tag) {
-        return; /* NodeInfo, Config, etc. — ignore for now */
+    /* Log ALL FromRadio variants for debugging */
+    switch (from_radio.which_payload_variant) {
+        case meshtastic_FromRadio_packet_tag: {
+            meshtastic_MeshPacket *pkt = &from_radio.packet;
+            if (pkt->which_payload_variant == meshtastic_MeshPacket_decoded_tag) {
+                g_info("Meshtastic: packet from %08x port=%d len=%u %s",
+                       pkt->from,
+                       pkt->decoded.portnum,
+                       pkt->decoded.payload.size,
+                       (pkt->decoded.portnum == (meshtastic_PortNum)mp->custom_port)
+                           ? "[DEADMESH]" : "[passthrough]");
+
+                /* Text messages — log them for visibility */
+                if (pkt->decoded.portnum == meshtastic_PortNum_TEXT_MESSAGE_APP) {
+                    gchar *text = g_strndup((const gchar *)pkt->decoded.payload.bytes,
+                                            pkt->decoded.payload.size);
+                    g_info("Meshtastic: TEXT from %08x: %s", pkt->from, text);
+                    g_free(text);
+                }
+
+                /* Position updates */
+                if (pkt->decoded.portnum == meshtastic_PortNum_POSITION_APP) {
+                    g_debug("Meshtastic: POSITION from %08x (%u bytes)",
+                            pkt->from, pkt->decoded.payload.size);
+                }
+
+                /* Telemetry */
+                if (pkt->decoded.portnum == meshtastic_PortNum_TELEMETRY_APP) {
+                    g_debug("Meshtastic: TELEMETRY from %08x (%u bytes)",
+                            pkt->from, pkt->decoded.payload.size);
+                }
+
+                /* NodeInfo */
+                if (pkt->decoded.portnum == meshtastic_PortNum_NODEINFO_APP) {
+                    g_debug("Meshtastic: NODEINFO from %08x (%u bytes)",
+                            pkt->from, pkt->decoded.payload.size);
+                }
+            } else {
+                g_debug("Meshtastic: encrypted packet from %08x (can't decode)",
+                        pkt->from);
+            }
+            break;
+        }
+        case meshtastic_FromRadio_my_info_tag:
+            g_info("Meshtastic: received MyNodeInfo (node_num=%u)",
+                   from_radio.my_info.my_node_num);
+            if (mp->local_node_id == 0) {
+                mp->local_node_id = from_radio.my_info.my_node_num;
+                g_info("Meshtastic: auto-detected local node ID: %08x",
+                       mp->local_node_id);
+            }
+            break;
+        case meshtastic_FromRadio_node_info_tag:
+            g_debug("Meshtastic: NodeInfo update for %08x",
+                    from_radio.node_info.num);
+            break;
+        case meshtastic_FromRadio_config_tag:
+            g_debug("Meshtastic: device config received");
+            break;
+        case meshtastic_FromRadio_log_record_tag:
+            g_debug("Meshtastic: device log: %s",
+                    from_radio.log_record.message);
+            break;
+        default:
+            g_debug("Meshtastic: FromRadio variant %d",
+                    from_radio.which_payload_variant);
+            break;
     }
+
+    /* === Original gateway logic: only process port 100 === */
+    if (from_radio.which_payload_variant != meshtastic_FromRadio_packet_tag)
+        return;
 
     meshtastic_MeshPacket *pkt = &from_radio.packet;
 
-    /* Only handle our custom port */
-    if (pkt->which_payload_variant != meshtastic_MeshPacket_decoded_tag) {
-        return; /* encrypted packet — can't decode without channel key */
-    }
-
-    if (pkt->decoded.portnum != (meshtastic_PortNum)mp->custom_port) {
+    if (pkt->which_payload_variant != meshtastic_MeshPacket_decoded_tag)
         return;
-    }
 
+    if (pkt->decoded.portnum != (meshtastic_PortNum)mp->custom_port)
+        return;
+
+    /* ... rest of the original handle_incoming_frame code for session routing ... */
     uint32_t src_node  = pkt->from;
     uint32_t packet_id = pkt->id;
 
@@ -342,8 +455,6 @@ static void handle_incoming_frame(MeshtasticPlugin *mp,
         return;
     }
 
-    /* The payload encodes our chunk header + data.
-     * Format: seq(4LE) + total(4LE) + data_bytes    */
     const pb_byte_t *raw     = pkt->decoded.payload.bytes;
     size_t           raw_len = pkt->decoded.payload.size;
 
@@ -361,17 +472,11 @@ static void handle_incoming_frame(MeshtasticPlugin *mp,
     const uint8_t *chunk_data = raw + 8;
     size_t         chunk_len  = raw_len - 8;
 
-    /* session_id: use packet_id of the FIRST packet in the sequence.
-     * For subsequent chunks, the caller must use the same session_id.
-     * Simple convention: session_id = packet_id of seq_num 0.
-     * TODO: the client side needs to send seq 0 first, or include
-     * the session_id explicitly in the chunk header.               */
     uint32_t session_id = (seq_num == 0) ? packet_id : packet_id;
 
     MeshSession *session = mesh_session_get_or_create(
         mp->sessions, src_node, session_id);
 
-    /* Initialise reassembly on first chunk */
     if (seq_num == 0 || session->expected_chunks == 0) {
         mesh_session_init_reassembly(session, total_chunks);
     }
@@ -384,12 +489,7 @@ static void handle_incoming_frame(MeshtasticPlugin *mp,
 
     if (!complete) return;
 
-    /* All chunks received — inject reassembled data into the connection */
     if (!session->conn) {
-        /* No connection yet — this session needs a new proxy connection.
-         * For now, log and skip. Full implementation requires creating
-         * a MeshStream GIOStream and handing it to the network layer.
-         * That's mesh_stream.c, the next piece.                       */
         g_info("Meshtastic: session %08x:%08x complete (%u bytes) "
                "— no connection assigned yet (mesh_stream pending)",
                src_node, session_id,
@@ -397,7 +497,6 @@ static void handle_incoming_frame(MeshtasticPlugin *mp,
         return;
     }
 
-    /* Append reassembled data to connection's client buffer */
     g_byte_array_append(session->conn->client_buffer,
                         session->assembly_buf->data,
                         session->assembly_buf->len);
@@ -405,7 +504,6 @@ static void handle_incoming_frame(MeshtasticPlugin *mp,
     g_info("Meshtastic: injected %u reassembled bytes into conn %lu",
             session->assembly_buf->len, session->conn->id);
 
-    /* Reset reassembly state for next message on this session */
     mesh_session_init_reassembly(session, 0);
     (void)context;
 }
@@ -535,15 +633,13 @@ static gboolean on_response_body(DeadlightResponse *response G_GNUC_UNUSED) {
     return TRUE;
 }
 
-static gboolean on_connection_close(DeadlightContext *context,
-                                 DeadlightConnection *conn) {
-    if (!context->plugins_data) return TRUE;
+static gboolean on_connection_close(DeadlightConnection *conn) {
+    if (!conn->context || !conn->context->plugins_data) return TRUE;
 
     MeshtasticPlugin *mp = g_hash_table_lookup(
-        context->plugins_data, "meshtastic");
+        conn->context->plugins_data, "meshtastic");
     if (!mp) return TRUE;
 
-    /* If this connection had a mesh session, close and remove it */
     if (conn->mesh_session_id != 0) {
         MeshSession *session = mesh_session_lookup(
             mp->sessions,

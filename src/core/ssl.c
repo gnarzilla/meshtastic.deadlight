@@ -616,7 +616,7 @@ gboolean deadlight_ssl_intercept_connection(DeadlightConnection *conn, GError **
         return FALSE;
     }
     
-    const gchar *alpn_protos[] = {"h2", "http/1.1", NULL};
+    const gchar *alpn_protos[] = {"http/1.1", NULL};
     g_object_set(conn->client_tls,
                 "advertised-protocols", alpn_protos,
                 NULL);

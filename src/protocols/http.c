@@ -26,8 +26,6 @@ void deadlight_register_http_handler(void) {
     deadlight_protocol_register(&http_protocol_handler);
 }
 
-// --- Protocol Handler Implementation ---
-
 static gsize http_detect(const guint8 *data, gsize len) {
     // --- Check if it's a WebSocket upgrade first ---
     gchar *request_lower = NULL;
@@ -122,6 +120,9 @@ static DeadlightHandlerResult handle_plain_http(DeadlightConnection *conn, GErro
     }
 
     g_info("Connection %lu: HTTP request to %s:%d", conn->id, host, port);
+
+    conn->target_host = g_strdup(host);
+    conn->target_port = port;
     
     if (!deadlight_network_connect_upstream(conn, error)) {
         g_free(host);
