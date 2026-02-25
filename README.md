@@ -2,7 +2,7 @@
 
 **Internet-over-LoRa: Update your blog from a can on a string from the smoldering rubble.**
 
-Part of the [Deadlight ecosystem](https://deadlight.boo) secure, performant, privacy-focused tools for resilient connectivity on mesh/satellite/spotty networks.
+Part of the [Deadlight ecosystem](https://deadlight.boo) — secure, performant, privacy-focused tools for resilient connectivity on mesh/satellite/spotty networks.
 
 [![deadmesh](https://meshtastic.deadlight.boo/favicon.ico)](https://meshtastic.deadlight.boo) [Project Blog](https://meshtastic.deadlight.boo) · [Why This Exists](#why-this-exists) · [Getting Started](#getting-started) · [Hardware](#hardware) · [Dashboard](#dashboard) · [Usage](#usage) · [Configuration](#configuration) · [How It Works](#how-it-works) · [Real-World Use Cases](#real-world-use-cases) · [Performance](#performance) · [Roadmap](#roadmap) · [License](#license)
 
@@ -10,16 +10,17 @@ Part of the [Deadlight ecosystem](https://deadlight.boo) secure, performant, pri
 
 ## Overview
 
-**deadmesh** transforms LoRa mesh networks into practical Internet gateways. Built on the [proxy.deadlight](https://github.com/gnarzilla/proxy.deadlight) foundation, it adds transparent mesh networking that lets any device on a Meshtastic mesh access standard Internet protocols HTTP/HTTPS, email, DNS, FTP, as if they had normal connectivity.
+**deadmesh** transforms LoRa mesh networks into practical Internet gateways. Built on the [proxy.deadlight](https://github.com/gnarzilla/proxy.deadlight) foundation, it adds transparent mesh networking that lets any device on a Meshtastic mesh access standard Internet protocols — HTTP/HTTPS, email, DNS, FTP — as if they had normal connectivity.
 
 **What makes this different from other mesh solutions:**
-- Standard protocols work unchanged, browse websites, send email, use apps
-- Transparent to applications, no special client software needed
+- Standard protocols work unchanged — browse websites, send email, use apps
+- Transparent to applications — no special client software needed
 - Automatic fragmentation and reassembly for mesh transport
 - Full MITM proxy capabilities for traffic inspection and caching
 - Works with existing Meshtastic hardware and networks
 - Truly off-grid: solar-powered nodes can provide connectivity across kilometers
 - Real-time gateway dashboard with SSE streaming, embedded in the binary
+- Live mesh visibility — see every node, position, telemetry, and text message on your network
 
 Think of it as giving your Meshtastic network the capabilities of a satellite terminal, running on $30 hardware with zero monthly fees.
 
@@ -27,10 +28,10 @@ Think of it as giving your Meshtastic network the capabilities of a satellite te
 
 ## Why This Exists
 
-Meshtastic networks are incredible for messaging and telemetry, but they weren't designed for general Internet access. Each protocol (HTTP, SMTP, DNS) would need custom mesh-aware implementations, a chicken-and-egg problem where applications won't add mesh support without users, and users won't adopt mesh without applications.
+Meshtastic networks are incredible for messaging and telemetry, but they weren't designed for general Internet access. Each protocol (HTTP, SMTP, DNS) would need custom mesh-aware implementations — a chicken-and-egg problem where applications won't add mesh support without users, and users won't adopt mesh without applications.
 
 deadmesh sits in the middle:
-1. **Mesh side**: Speaks fluent Meshtastic (protobuf over LoRa serial)
+1. **Mesh side**: Speaks fluent Meshtastic (protobuf over LoRa serial with proper API handshake)
 2. **Internet side**: Speaks every protocol your applications already use
 3. **Bridges transparently**: Fragments outgoing requests, reassembles incoming responses
 
@@ -46,14 +47,16 @@ deadmesh sits in the middle:
 
 ## Features
 
-- **Universal Protocol Support**: HTTP/HTTPS, SMTP/IMAP, SOCKS4/5, WebSocket, FTP, if it runs over TCP/IP, it works
-- **Transparent TLS Interception**: Inspect and cache HTTPS traffic to minimize mesh bandwidth
+- **Universal Protocol Support**: HTTP/HTTPS, SMTP/IMAP, SOCKS4/5, WebSocket, FTP — if it runs over TCP/IP, it works
+- **Transparent TLS Interception**: Inspect and cache HTTPS traffic with HTTP/1.1 ALPN negotiation to minimize mesh bandwidth
 - **Intelligent Fragmentation**: Automatically chunks large requests/responses into ~220-byte Meshtastic packets
+- **Serial API Handshake**: Proper `want_config` initialization — auto-discovers node ID, receives full mesh state on startup
+- **Live Mesh Visibility**: Decodes all Meshtastic packet types — text messages, positions, telemetry, node info, routing
 - **Store-and-Forward**: Delay-tolerant networking handles intermittent mesh connectivity
-- **Connection Pooling**: Reuses upstream connections aggressively to reduce LoRa airtime cost
-- **Plugin Extensibility**: Compression, caching, rate limiting, custom protocol handlers
+- **Connection Pooling**: Reuses upstream connections aggressively with TLS session reuse to reduce LoRa airtime cost
+- **Plugin Extensibility**: Ad blocking, rate limiting, compression, caching, custom protocol handlers
 - **Hardware Flexibility**: USB serial, Bluetooth, or TCP-connected radios
-- **Zero-Config Detection**: Auto-discovers Meshtastic devices on serial ports
+- **Auto-Detection**: Auto-discovers Meshtastic devices on serial ports and auto-detects local node ID from device
 - **Embedded Dashboard**: Real-time gateway monitor with SSE streaming, self-contained in the binary, no external assets
 
 ## Getting Started
@@ -62,8 +65,12 @@ deadmesh sits in the middle:
 
 **Software**:
 - Linux (Raspberry Pi, x86 server, or similar)
-- GLib 2.0+, OpenSSL 1.1+
+- GLib 2.0+, OpenSSL 1.1+, json-glib-1.0
 - GCC or Clang
+- Python 3 + pip (for nanopb protobuf generation during build)
+
+**Optional** (for Meshtastic CLI testing):
+- Python meshtastic package (`pip install meshtastic`)
 
 **Hardware** (see [Hardware](#hardware) for details):
 - Meshtastic-compatible LoRa radio (ESP32-based recommended)
@@ -79,52 +86,126 @@ deadmesh sits in the middle:
    make clean && make UI=1
    ```
 
-2. **Install CA certificate** (for HTTPS interception):
+2. **Connect your Meshtastic radio**:
    ```bash
-   # Generated on first run at ~/.deadmesh/ca/
-   sudo cp ~/.deadmesh/ca/ca.crt /usr/local/share/ca-certificates/deadmesh.crt
+   # Most devices appear as /dev/ttyACM0 or /dev/ttyUSB0
+   ls -l /dev/ttyACM0 /dev/ttyUSB0 2>/dev/null
+
+   # Add yourself to the dialout group
+   sudo usermod -a -G dialout $USER
+   # Log out and back in for group change to take effect
+   ```
+
+3. **Configure** — create `deadmesh.conf`:
+   ```ini
+   [core]
+   port = 8080
+   max_connections = 50
+   log_level = info
+
+   [meshtastic]
+   enabled = true
+   serial_port = /dev/ttyACM0
+   baud_rate = 115200
+   mesh_node_id = 0          ; 0 = auto-detect from device
+   fragment_size = 220
+   ack_timeout = 30000
+   max_retries = 3
+   hop_limit = 3
+
+   [ssl]
+   enabled = true
+   ca_cert_file = /home/youruser/.deadlight/ca.crt
+   ca_key_file = /home/youruser/.deadlight/ca.key
+
+   [network]
+   connection_pool_size = 5
+   connection_pool_timeout = 600
+   upstream_timeout = 120
+   ```
+
+   > **Note**: Use absolute paths for `ca_cert_file` and `ca_key_file`. The `~` shortcut expands to `/root/` when running with `sudo`, which is likely not where your certs are.
+
+4. **Install CA certificate** (for HTTPS interception):
+   ```bash
+   sudo cp /home/youruser/.deadlight/ca.crt /usr/local/share/ca-certificates/deadmesh.crt
    sudo update-ca-certificates
    ```
 
-3. **Connect your Meshtastic radio**:
+5. **Run the gateway**:
    ```bash
-   # Most devices appear as /dev/ttyACM0 or /dev/ttyUSB0
-   ls -l /dev/tty*
-
-   # Add yourself to the dialout group (or run as root)
-   sudo usermod -a -G dialout $USER
+   ./bin/deadmesh -c deadmesh.conf -v
    ```
 
-4. **Run the gateway**:
+   You should see:
+   - `Meshtastic: sent want_config handshake` — serial API initialized
+   - `Meshtastic: auto-detected local node ID: XXXXXXXX` — device recognized
+   - `Meshtastic: NodeInfo update for XXXXXXXX` — mesh nodes populating
+   - Live packet stream: `POSITION`, `TELEMETRY`, `TEXT`, `NODEINFO` from mesh
+
+6. **Open the dashboard** at `http://localhost:8081` to monitor gateway activity.
+
+7. **Test the proxy**:
    ```bash
-   sudo ./bin/deadmesh -c deadmesh.conf
-   # or with verbose output:
-   sudo ./bin/deadmesh -c deadmesh.conf -v
+   # HTTP
+   curl -x http://localhost:8080 http://example.com
+
+   # HTTPS
+   curl --cacert /home/youruser/.deadlight/ca.crt -x http://localhost:8080 https://example.com
+
+   # SOCKS5
+   curl --socks5 localhost:8080 http://example.com
    ```
 
-5. **Open the dashboard** at `http://localhost:8081` to monitor gateway activity.
+### WSL (Windows Subsystem for Linux)
 
-6. **Configure mesh clients** to use the gateway's address as their proxy (see [Usage](#usage)).
+deadmesh works under WSL2 with USB/IP passthrough for the Meshtastic radio:
+
+```powershell
+# PowerShell (Admin) — install and attach USB device
+winget install usbipd
+usbipd list                              # Find your radio's BUSID
+usbipd bind --busid <BUSID>             # One-time bind
+usbipd attach --wsl --busid <BUSID>     # Attach to WSL (repeat after replug)
+```
+
+```bash
+# WSL — verify device
+ls -l /dev/ttyACM0
+sudo usermod -a -G dialout $USER
+```
+
+> **Note**: You must re-run `usbipd attach` from PowerShell each time the radio is unplugged, the PC sleeps, or WSL restarts.
 
 ## Hardware
+
+### Tested Hardware
+
+| Device | Chip | Connection | Status |
+|---|---|---|---|
+| **Seeed Wio Tracker L1** | nRF52840 + SX1262 | USB CDC (`/dev/ttyACM0`) | ✅ Verified |
+| RAK WisBlock (RAK4631) | nRF52840 + SX1262 | USB CDC | Expected to work |
+| Heltec LoRa 32 V3 | ESP32-S3 + SX1262 | USB CDC (CH9102) | Expected to work |
+| Heltec V4 | ESP32-S3 | USB CDC | Expected to work |
+| Lilygo T-Beam | ESP32 + SX1276/8 | USB UART (CP2104) | Expected to work |
+| Lilygo T-Echo | nRF52840 + SX1262 | USB CDC | Expected to work |
+| Station G2 | ESP32-S3 | USB CDC | Expected to work |
 
 ### Recommended Gateway Setup
 
 **Option 1: Raspberry Pi Gateway** (most versatile)
 - Raspberry Pi 4/5 (2GB+ RAM)
-- RAK WisBlock Meshtastic Starter Kit or Heltec LoRa 32 V3
-- Connection: USB serial or GPIO UART
+- Any Meshtastic radio from table above
+- Connection: USB serial
 - Power: 5V/3A supply or 12V solar panel + battery
 
-**Option 2: ESP32-S3 All-in-One** (compact)
-- Lilygo T-Deck or T-Watch S3
-- 8MB+ PSRAM required
-- Built-in LoRa radio and display
-- Power: LiPo battery + solar panel
+**Option 2: x86/ARM Server** (development / high-throughput)
+- Any Linux box with USB port
+- Works under WSL2 with USB/IP passthrough
+- Meshtastic radio via USB
 
 **Option 3: Industrial/Outdoor**
-- Heltec Wireless Tracker or Mesh Node T114
-- Weatherproof enclosure
+- Weatherproof enclosure with Raspberry Pi
 - High-gain directional antenna (5-8 dBi)
 - Solar panel + LiFePO4 battery for 24/7 operation
 
@@ -163,13 +244,13 @@ Build with dashboard support:
 make clean && make UI=1
 ```
 
-The dashboard uses the same green-on-black theme as the project identity. When mesh-layer data (node RSSI, hop counts, LoRa packet stats) is wired to the API, the Mesh Links panel will populate with per-node telemetry.
+The dashboard uses the same green-on-black theme as the project identity. Mesh-layer data (node positions, telemetry, text messages, RSSI, hop counts) is decoded by the gateway and will populate the Mesh Links panel as the UI evolves.
 
 ## Usage
 
 ### Basic Configuration
 
-Create `deadmesh.conf` (or let it auto-generate on first run):
+Create `deadmesh.conf`:
 
 ```ini
 [core]
@@ -181,7 +262,8 @@ log_level = info
 enabled = true
 serial_port = /dev/ttyACM0
 baud_rate = 115200
-mesh_node_id = 0x00000000   ; 0 = auto-detect
+mesh_node_id = 0             ; 0 = auto-detect from device on startup
+custom_port = 100            ; Meshtastic portnum for deadmesh traffic
 fragment_size = 220          ; max payload bytes per LoRa packet
 ack_timeout = 30000          ; ms — 30s for mesh ACKs
 max_retries = 3
@@ -189,14 +271,16 @@ hop_limit = 3
 
 [ssl]
 enabled = true
-ca_cert_file = ~/.deadmesh/ca/ca.crt
-ca_key_file = ~/.deadmesh/ca/ca.key
+ca_cert_file = /home/youruser/.deadlight/ca.crt
+ca_key_file = /home/youruser/.deadlight/ca.key
 
 [network]
-connection_pool_size = 5        ; reuse connections aggressively
-connection_pool_timeout = 600   ; hold idle connections longer
-upstream_timeout = 120          ; allow slow mesh responses (seconds)
+connection_pool_size = 5
+connection_pool_timeout = 600
+upstream_timeout = 120
 ```
+
+> **Important**: Use absolute paths for cert files. Running with `sudo` changes `~` to `/root/`.
 
 ### Client Setup
 
@@ -223,11 +307,14 @@ export https_proxy=http://gateway-ip:8080
 # HTTP through gateway
 curl -x http://localhost:8080 http://example.com
 
-# HTTPS (with CA installed)
-curl --cacert ~/.deadmesh/ca/ca.crt -x http://localhost:8080 https://example.com
+# HTTPS (with CA cert — use absolute path)
+curl --cacert /home/youruser/.deadlight/ca.crt -x http://localhost:8080 https://example.com
 
 # SOCKS5
 curl --socks5 localhost:8080 http://example.com
+
+# SOCKS4
+curl --socks4 localhost:8080 http://example.com
 
 # Send email via mesh relay
 curl -x http://localhost:8080 \
@@ -240,17 +327,26 @@ curl -x http://localhost:8080 \
 ssh -o ProxyCommand="nc -X 5 -x localhost:8080 %h %p" user@remote-server
 ```
 
+### Meshtastic CLI (optional, for testing)
+
+The Python `meshtastic` CLI is useful for verifying radio connectivity before running deadmesh:
+
+```bash
+pip install meshtastic
+meshtastic --info --port /dev/ttyACM0
+```
+
+> **Note**: Stop deadmesh before using the Meshtastic CLI — they cannot share the serial port simultaneously.
+
 ## Configuration
 
 ### Full Reference
 
-deadmesh auto-generates a fully commented `deadmesh.conf` on first run. Key sections:
-
 **`[core]`** — port, bind address, max connections, log level, worker threads
 
-**`[meshtastic]`** — serial port, baud rate, node ID, channel PSK, fragment size, ACK timeout, retries, hop limit, gateway announcement
+**`[meshtastic]`** — serial port, baud rate, node ID (0=auto-detect), custom portnum, fragment size, ACK timeout, retries, hop limit, gateway announcement
 
-**`[ssl]`** — CA cert/key paths, cipher suites, certificate cache
+**`[ssl]`** — CA cert/key paths (use absolute paths), cipher suites, certificate cache
 
 **`[network]`** — connection pool size/timeout, upstream timeout, DNS, keepalive
 
@@ -262,7 +358,7 @@ deadmesh auto-generates a fully commented `deadmesh.conf` on first run. Key sect
 
 **`[plugin.cache]`** — cache directory, max size, TTL (reduces repeat mesh traffic significantly)
 
-**`[plugin.ratelimiter]`** — priority queuing (SMTP/IMAP/DNS over video/images)
+**`[plugin.ratelimiter]`** — priority queuing and rate limiting
 
 **`[plugin.stats]`** — dashboard port, update interval, history size
 
@@ -292,14 +388,6 @@ upstream_timeout = 300
 connection_pool_timeout = 600
 ```
 
-**Priority shaping**:
-```ini
-[plugin.ratelimiter]
-enabled = true
-priority_high = smtp,imap,dns
-priority_low = http_video,http_images
-```
-
 ### Multi-Gateway Setup
 
 For redundancy across a large mesh:
@@ -322,14 +410,36 @@ Multiple deadmesh gateways on the same channel will announce themselves, allowin
 │  Handheld)  │  (868/915 MHz)   │              │                │          │
 │             │                  │ - Fragment   │                │  HTTP    │
 │ Meshtastic  │                  │ - Reassemble │                │  SMTP    │
-│    App      │<─────────────────┤ - TLS Proxy  │<───────────────┤  IMAP   │
+│    App      │<─────────────────┤ - TLS Proxy  │<───────────────┤  IMAP    │
 └─────────────┘                  │ - Cache      │                └──────────┘
                                  │ - Compress   │
                                  └──────┬───────┘
                                         │
-                                        ├─> Other mesh nodes
-                                        ├─> Offline message store
-                                        └─> Satellite uplink (optional)
+                                 ┌──────┴───────┐
+                                 │  Serial API   │
+                                 │  0x94 0xC3    │
+                                 │  protobuf     │
+                                 │  want_config  │
+                                 └──────┬───────┘
+                                        │ USB
+                                 ┌──────┴───────┐
+                                 │  Meshtastic   │
+                                 │  Radio        │
+                                 │  (LoRa)       │
+                                 └──────────────┘
+```
+
+### Startup Sequence
+
+```
+1. Open serial port (/dev/ttyACM0) at 115200 baud
+2. Send want_config handshake (ToRadio protobuf)
+3. Receive MyNodeInfo → auto-detect local node ID
+4. Receive device config, module config, channel config
+5. Receive NodeInfo for all known mesh nodes
+6. Begin receiving live mesh packets (position, telemetry, text, etc.)
+7. Filter for custom portnum (100) for proxy session traffic
+8. All other packets logged for mesh visibility
 ```
 
 ### Packet Flow
@@ -339,7 +449,7 @@ Multiple deadmesh gateways on the same channel will announce themselves, allowin
 HTTP GET request (1500 bytes)
 └─> Split into 7 LoRa packets (~220 bytes each)
 └─> Each tagged with sequence number + session ID
-└─> Sent hop-by-hop through mesh to gateway
+└─> Sent hop-by-hop through mesh to gateway on portnum 100
 └─> Gateway reassembles → proxies to Internet
 ```
 
@@ -352,24 +462,49 @@ HTTP response (50KB HTML)
 └─> Client reassembles → delivers to application
 ```
 
+### Serial Framing
+
+Meshtastic uses a length-prefixed binary protocol over serial:
+
+```
+┌────────┬────────┬───────────┬───────────┬─────────────────┐
+│ 0x94   │ 0xC3   │ len_hi    │ len_lo    │ protobuf payload│
+│ magic0 │ magic1 │ (MSB)     │ (LSB)     │ (FromRadio/     │
+│        │        │           │           │  ToRadio)       │
+└────────┴────────┴───────────┴───────────┴─────────────────┘
+```
+
+The framing layer handles sync recovery — if magic bytes are lost mid-stream, the state machine re-synchronizes automatically.
+
 ### Protocol Detection
 
 deadmesh auto-detects protocols by inspecting initial bytes — no configuration needed:
 
 | Initial bytes | Protocol | Handler |
 |---|---|---|
-| `GET / HTTP/1.1` | HTTP | Fragment and forward |
-| `CONNECT host:443` | HTTPS tunnel | Optional TLS interception |
+| `GET / HTTP/1.1` | HTTP | Forward to upstream |
+| `CONNECT host:443` | HTTPS tunnel | TLS interception (HTTP/1.1 ALPN) |
 | `EHLO` / `HELO` | SMTP | Email relay |
 | `A001 NOOP` | IMAP | Mail client support |
 | `\x05` | SOCKS5 | Transparent tunneling |
 | `\x04` | SOCKS4 | Legacy tunneling |
 
+### Meshtastic Packet Types Decoded
+
+| Port | Type | Handling |
+|---|---|---|
+| 1 | TEXT_MESSAGE | Logged for mesh visibility |
+| 3 | POSITION | Logged (lat/lon/alt) |
+| 4 | NODEINFO | Logged (node database) |
+| 5 | ROUTING | Logged |
+| 67 | TELEMETRY | Logged (battery, airtime, etc.) |
+| 100 | DEADMESH (custom) | Routed to proxy session manager |
+
 ### Security Model
 
 **Encryption layers**:
 1. **LoRa PHY**: AES-256 at the Meshtastic layer (channel PSK)
-2. **TLS**: End-to-end between client and final destination
+2. **TLS**: End-to-end between client and final destination (HTTP/1.1 negotiated via ALPN)
 3. **Proxy MITM** (optional): deadmesh terminates TLS for caching/inspection — requires clients to trust the gateway CA
 
 **Trust model**: Gateway holds the root CA. Mesh uses Meshtastic channel encryption. Clients trust the gateway CA by installing `ca.crt`.
@@ -442,33 +577,79 @@ deadmesh auto-detects protocols by inspecting initial bytes — no configuration
 
 ## Roadmap
 
+### v1.0.1 (Current)
+- [x] HTTP/HTTPS/SOCKS4/SOCKS5 proxy — verified working
+- [x] TLS interception with upstream certificate mimicry
+- [x] Connection pooling with TLS session reuse
+- [x] Serial API handshake (`want_config`) for Meshtastic 2.x firmware
+- [x] Auto-detect local node ID from device
+- [x] Full mesh packet decoding — text, position, telemetry, nodeinfo, routing
+- [x] Embedded SSE dashboard
+- [x] Plugin system — ad blocker, rate limiter, meshtastic transport
+- [x] Mesh simulator for development (`tools/mesh-sim`)
+- [x] WSL2 support via USB/IP passthrough
+
 ### v1.1 (Q2 2026)
-- Adaptive fragmentation based on live mesh conditions
-- Exponential backoff retry
-- Pre-fetching for common resources
-- Android client app (native deadmesh on-device)
-- Node topology visualization in dashboard
+- [ ] Mesh node table in dashboard UI (positions, telemetry, last heard)
+- [ ] SSE streaming of mesh packet events to dashboard
+- [ ] Adaptive fragmentation based on live mesh conditions
+- [ ] Exponential backoff retry
+- [ ] Pre-fetching for common resources
+- [ ] Android client app (native deadmesh on-device)
+- [ ] Node topology visualization in dashboard
 
 ### v1.2 (Q3 2026)
-- Multi-gateway coordination protocol
-- Offline message queue (store-and-forward when gateway unreachable)
-- Per-client/protocol bandwidth shaping
-- WebRTC signaling over mesh (peer-to-peer voice/video)
-- Per-node RSSI, hop count, LoRa stats in dashboard
+- [ ] Multi-gateway coordination protocol
+- [ ] Offline message queue (store-and-forward when gateway unreachable)
+- [ ] Per-client/protocol bandwidth shaping
+- [ ] WebRTC signaling over mesh (peer-to-peer voice/video)
+- [ ] Per-node RSSI, hop count, LoRa stats in dashboard
 
 ### v2.0 (Future)
-- Full IPv6 support
-- Meshtastic firmware integration (run deadmesh directly on ESP32)
-- Satellite backhaul optimization (Starlink, Iridium)
-- Mesh route prediction
+- [ ] Full IPv6 support
+- [ ] Meshtastic firmware integration (run deadmesh directly on ESP32)
+- [ ] Satellite backhaul optimization (Starlink, Iridium)
+- [ ] Mesh route prediction
+
+## Build Details
+
+### Dependencies
+
+```bash
+# Debian/Ubuntu
+sudo apt-get install build-essential pkg-config libglib2.0-dev \
+  libssl-dev libjson-glib-dev
+
+# Python (for nanopb protobuf generation)
+pip install protobuf grpcio-tools
+```
+
+### Build Targets
+
+```bash
+make clean && make UI=1     # Full build with dashboard
+make clean && make           # Build without dashboard
+make                         # Incremental build
+```
+
+### Build Output
+
+```
+bin/deadmesh                 # Main binary
+bin/plugins/adblocker.so     # Ad blocker plugin
+bin/plugins/meshtastic.so    # Meshtastic transport plugin
+bin/plugins/ratelimiter.so   # Rate limiter plugin
+tools/mesh-sim               # Mesh network simulator
+```
 
 ## Contributing
 
 deadmesh is a specialized component of the [Deadlight ecosystem](https://deadlight.boo), built on [proxy.deadlight](https://github.com/gnarzilla/proxy.deadlight). Contributions welcome:
 
 - **Protocol optimizations**: Improve mesh efficiency
-- **Hardware testing**: Validate on different radio platforms  
+- **Hardware testing**: Validate on different radio platforms
 - **Real-world deployments**: Share use cases and lessons learned
+- **Dashboard improvements**: Mesh visualization, node maps, telemetry charts
 - **Documentation**: Non-English guides especially valuable for global deployments
 
 See [CONTRIBUTING.md](docs/CONTRIBUTING.md) for guidelines.
@@ -515,4 +696,20 @@ Includes:
 
 ---
 
-**Status**: v1.0.0 testing-ready | **Maintained by**: [@gnarzilla](https://github.com/gnarzilla) | [deadlight.boo](https://deadlight.boo)
+**Status**: v1.0.1 — proxy verified, mesh serial active, 80+ nodes visible | **Maintained by**: [@gnarzilla](https://github.com/gnarzilla) | [deadlight.boo](https://deadlight.boo)
+```
+
+## Key Changes from Original
+
+| Section | What Changed |
+|---|---|
+| **Overview** | Added "live mesh visibility" bullet |
+| **Features** | Added serial API handshake, live mesh visibility, auto-detect node ID, HTTP/1.1 ALPN |
+| **Prerequisites** | Added json-glib-1.0, Python/nanopb, meshtastic CLI as optional |
+| **Getting Started** | Rewrote with absolute cert paths, added expected startup output, added WSL section |
+| **Config** | Added `custom_port = 100`, `mesh_node_id = 0` for auto-detect, absolute path warning |
+| **How It Works** | Added startup sequence, serial framing diagram, packet type table |
+| **Hardware** | Added tested hardware table with verified Wio Tracker |
+| **Roadmap** | Added v1.0.1 section with everything verified tonight, reorganized v1.1 |
+| **Build Details** | New section with dependencies and build output |
+| **Status line** | Updated to "v1.0.1 — proxy verified, mesh serial active, 80+ nodes visible" |
