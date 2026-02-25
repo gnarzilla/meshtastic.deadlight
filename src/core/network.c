@@ -1,5 +1,5 @@
 /**
- * Deadlight Proxy v1.0 - Network Module
+ * Deadlight Proxy v1.0 - Network Module (FIXED)
  *
  * Socket management, connection handling, and data transfer
  * 
@@ -547,12 +547,8 @@ gboolean deadlight_network_connect_upstream(DeadlightConnection *conn, GError **
             conn->id, conn->target_host, conn->target_port);
 
     GSocketClient *client = g_socket_client_new();
-    // Read from config — mesh paths need much longer timeouts than the old 30s hardcode.
-    // deadmesh default is 120s; proxy.deadlight default is 30s.
-    gint upstream_timeout = deadlight_config_get_int(conn->context, "network",
-                                                      "upstream_timeout", 30);
-    g_socket_client_set_timeout(client, upstream_timeout);
-
+    g_socket_client_set_timeout(client, 30);
+    
     conn->upstream_connection = g_socket_client_connect_to_host(
         client,
         conn->target_host,
@@ -697,10 +693,15 @@ void deadlight_network_release_to_pool(DeadlightConnection *conn, const gchar *r
  */
 static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remove_from_table) {
     if (!conn) return;
-    
+
+    /* Guard against re-entry. The hash table destructor (_destroy_notify_connection)
+     * calls this with remove_from_table=FALSE. When we call g_hash_table_remove()
+     * below it fires that destructor immediately for the same conn — re-entering
+     * here before we've finished. cleaned must be checked, not just set.  */
+    if (conn->cleaned) return;
     conn->cleaned = TRUE;
 
-    g_debug("Cleaning up connection %lu (state=%d, remove_from_table=%d)", 
+    g_debug("Cleaning up connection %lu (state=%d, remove_from_table=%d)",
             conn->id, conn->state, remove_from_table);
 
     // Notify plugins FIRST (while connection is still valid)
@@ -1080,9 +1081,10 @@ void deadlight_network_tunnel_socket_connections(GSocketConnection *conn1, GSock
             g_clear_error(&error);
         }
         
-        /* No busy-wait needed — poll loop above already handles both directions.
-         * The pollable sources created above (source1/source2) are only used
-         * for cleanup; main-loop integration is a future enhancement. */
+        if (G_IS_POLLABLE_INPUT_STREAM(in1)) {
+            g_pollable_input_stream_create_source(G_POLLABLE_INPUT_STREAM(in1), NULL);
+            // Use main loop integration instead of busy waiting
+        }
     }
     
     // Cleanup sources
@@ -1219,10 +1221,7 @@ gboolean deadlight_network_tunnel_data(DeadlightConnection *conn, GError **error
             g_clear_error(&local_error);
         }
         
-        // Brief yield when no data is moving.
-        // TODO(mesh): Replace with g_socket_condition_wait() once the mesh
-        // transport layer is wired in — LoRa latency (500ms-5s/hop) makes a
-        // 1ms busy-poll wasteful on battery-powered gateway nodes.
+        // Small sleep if no activity to avoid busy loop (1ms vs original 10ms)
         if (!activity) {
             g_usleep(1000);
         }

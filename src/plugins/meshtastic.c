@@ -44,6 +44,9 @@
  * ───────────────────────────────────────────────────────────── */
 
 typedef struct {
+    /* Context — needed by reader thread to create connections */
+    DeadlightContext *context;
+
     /* Config */
     gchar    *serial_device;
     int       baud_rate;
@@ -153,6 +156,7 @@ static gboolean meshtastic_init(DeadlightContext *context) {
     g_info("Meshtastic: initialising transport plugin");
 
     MeshtasticPlugin *mp = g_new0(MeshtasticPlugin, 1);
+    mp->context = context;
 
     mp->enabled       = deadlight_config_get_bool(context,
                             "meshtastic", "enabled", TRUE);
@@ -254,29 +258,9 @@ static void meshtastic_cleanup(DeadlightContext *context) {
  * Reader thread
  * ───────────────────────────────────────────────────────────── */
 
-typedef struct {
-    MeshtasticPlugin *mp;
-    DeadlightContext *context;
-} ReaderThreadArgs;
-
-/* The reader thread needs both mp and context. We pass context via
- * the plugin's position in plugins_data rather than a separate alloc
- * to avoid lifetime issues — the thread only runs while mp->running. */
-
 static gpointer reader_thread_func(gpointer user_data) {
     MeshtasticPlugin *mp = (MeshtasticPlugin *)user_data;
-
-    /* We need context for session->conn creation.
-     * It's stored in plugins_data but we can't look it up from here
-     * without a context pointer. Work around: pass it via a small
-     * heap struct set up in meshtastic_init.                         */
-    DeadlightContext *context = mp->sessions->table
-        ? (DeadlightContext *)g_hash_table_lookup(
-              (GHashTable *)mp->sessions->table, "__context__")
-        : NULL;
-    /* NOTE: The __context__ trick above won't work as written.
-     * See the TODO below — this is addressed in the next iteration
-     * by storing context in MeshtasticPlugin directly.              */
+    DeadlightContext *context = mp->context;
 
     g_info("Meshtastic reader thread started (fd=%d)", mp->serial_fd);
 
@@ -551,13 +535,13 @@ static gboolean on_response_body(DeadlightResponse *response G_GNUC_UNUSED) {
     return TRUE;
 }
 
-static void on_connection_close(DeadlightContext *context,
+static gboolean on_connection_close(DeadlightContext *context,
                                  DeadlightConnection *conn) {
-    if (!context->plugins_data) return;
+    if (!context->plugins_data) return TRUE;
 
     MeshtasticPlugin *mp = g_hash_table_lookup(
         context->plugins_data, "meshtastic");
-    if (!mp) return;
+    if (!mp) return TRUE;
 
     /* If this connection had a mesh session, close and remove it */
     if (conn->mesh_session_id != 0) {
@@ -575,17 +559,18 @@ static void on_connection_close(DeadlightContext *context,
                     conn->mesh_source_node, conn->mesh_session_id);
         }
     }
+    return TRUE;
 }
 
-static void on_config_change(DeadlightContext *context,
+static gboolean on_config_change(DeadlightContext *context,
                               const gchar *section,
                               const gchar *key G_GNUC_UNUSED) {
-    if (g_strcmp0(section, "meshtastic") != 0) return;
-    if (!context->plugins_data) return;
+    if (g_strcmp0(section, "meshtastic") != 0) return TRUE;
+    if (!context->plugins_data) return TRUE;
 
     MeshtasticPlugin *mp = g_hash_table_lookup(
         context->plugins_data, "meshtastic");
-    if (!mp) return;
+    if (!mp) return TRUE;
 
     /* Re-read the fields that can change at runtime without a restart */
     mp->custom_port = (uint32_t)deadlight_config_get_int(
@@ -593,6 +578,7 @@ static void on_config_change(DeadlightContext *context,
 
     g_info("Meshtastic: config updated (custom_port=%u)", mp->custom_port);
     /* serial_port / baud_rate changes require full plugin restart (SIGHUP) */
+    return TRUE;
 }
 
 /* ─────────────────────────────────────────────────────────────
