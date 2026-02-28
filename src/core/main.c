@@ -534,7 +534,7 @@ static int run_interactive_mode(void) {
 
     // ── Startup output (interactive only) ─────────────────────
     if (!opt_daemon) {
-        g_print("\ndeadmesh (meshtastic.deadlight) %s is ready!\n", VERSION);
+        g_print("\ndeadmesh %s is ready!\n", VERSION);
         g_print("Build:  %s\n", BUILD_DATE);
         g_print("Port:   %d\n", port);
         g_print("Config: %s\n", opt_config_file ? opt_config_file : "default");
@@ -633,7 +633,7 @@ static void print_test_commands(gint port, gboolean vpn_enabled) {
 static void print_banner(void) {
     g_print("\n");
     g_print("═══════════════════════════════════════════════════════════\n");
-    g_print("              deadmesh · meshtastic.deadlight              \n");
+    g_print("                         deadmesh                          \n");
     g_print("           Internet-over-LoRa mesh gateway v%s          \n", VERSION);
     g_print("                  https://deadlight.boo                    \n");
     g_print("═══════════════════════════════════════════════════════════\n");
@@ -641,7 +641,7 @@ static void print_banner(void) {
 }
 
 static void print_usage(void) {
-    g_print("deadmesh (meshtastic.deadlight) %s\n", VERSION);
+    g_print("deadmesh %s\n", VERSION);
     g_print("Internet-over-LoRa mesh gateway — part of the Deadlight ecosystem\n\n");
     g_print("Usage: deadmesh [OPTIONS]\n\n");
     g_print("Options:\n");
@@ -657,7 +657,7 @@ static void print_usage(void) {
     g_print("  all, config, logging, network, protocols, ssl, plugins, meshtastic\n\n");
     g_print("Examples:\n");
     g_print("  deadmesh -p 8080\n");
-    g_print("  deadmesh -c meshtastic.conf -v\n");
+    g_print("  deadmesh -c deadmesh.conf -v\n");
     g_print("  deadmesh -d --pid-file /var/run/deadmesh.pid\n");
     g_print("  deadmesh -t all\n");
     g_print("\n");

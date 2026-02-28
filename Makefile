@@ -1,4 +1,4 @@
-# deadmesh (meshtastic.deadlight) v1.0.0
+# deadmesh v1.0.0
 # Build system for the modular proxy server
 
 #=============================================================================
