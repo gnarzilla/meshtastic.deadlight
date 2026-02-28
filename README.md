@@ -2,7 +2,7 @@
 
 **Internet-over-LoRa: Update your blog from a can on a string from the smoldering rubble.**
 
-Part of the [Deadlight ecosystem](https://deadlight.boo) — secure, performant, privacy-focused tools for resilient connectivity on mesh/satellite/spotty networks.
+Part of the [Deadlight ecosystem](https://deadlight.boo) secure, performant, privacy-focused tools for resilient connectivity on mesh/satellite/spotty networks.
 
 [![deadmesh](https://meshtastic.deadlight.boo/favicon.ico)](https://meshtastic.deadlight.boo) [Project Blog](https://meshtastic.deadlight.boo) · [Why This Exists](#why-this-exists) · [Getting Started](#getting-started) · [Hardware](#hardware) · [Dashboard](#dashboard) · [Usage](#usage) · [Configuration](#configuration) · [How It Works](#how-it-works) · [Real-World Use Cases](#real-world-use-cases) · [Performance](#performance) · [Roadmap](#roadmap) · [License](#license)
 
@@ -10,17 +10,17 @@ Part of the [Deadlight ecosystem](https://deadlight.boo) — secure, performant,
 
 ## Overview
 
-**deadmesh** transforms LoRa mesh networks into practical Internet gateways. Built on the [proxy.deadlight](https://github.com/gnarzilla/proxy.deadlight) foundation, it adds transparent mesh networking that lets any device on a Meshtastic mesh access standard Internet protocols — HTTP/HTTPS, email, DNS, FTP — as if they had normal connectivity.
+**deadmesh** transforms LoRa mesh networks into practical Internet gateways. Built on the [proxy.deadlight](https://github.com/gnarzilla/proxy.deadlight) foundation, it adds transparent mesh networking that lets any device on a Meshtastic mesh access standard Internet protocols HTTP/HTTPS, email, DNS, FTP, as if they had normal connectivity.
 
 **What makes this different from other mesh solutions:**
-- Standard protocols work unchanged — browse websites, send email, use apps
-- Transparent to applications — no special client software needed
+- Standard protocols work unchanged: browse websites, send email, use apps
+- Transparent to applications, no special client software needed
 - Automatic fragmentation and reassembly for mesh transport
 - Full MITM proxy capabilities for traffic inspection and caching
 - Works with existing Meshtastic hardware and networks
 - Truly off-grid: solar-powered nodes can provide connectivity across kilometers
 - Real-time gateway dashboard with SSE streaming, embedded in the binary
-- Live mesh visibility — see every node, position, telemetry, and text message on your network
+- Live mesh visibility: see every node, position, telemetry, and text message on your network
 
 Think of it as giving your Meshtastic network the capabilities of a satellite terminal, running on $30 hardware with zero monthly fees.
 
@@ -28,14 +28,14 @@ Think of it as giving your Meshtastic network the capabilities of a satellite te
 
 ## Why This Exists
 
-Meshtastic networks are incredible for messaging and telemetry, but they weren't designed for general Internet access. Each protocol (HTTP, SMTP, DNS) would need custom mesh-aware implementations — a chicken-and-egg problem where applications won't add mesh support without users, and users won't adopt mesh without applications.
+Meshtastic networks are incredible for messaging and telemetry, but they weren't designed for general Internet access. Each protocol (HTTP, SMTP, DNS) would need custom mesh-aware implementations, a chicken-and-egg problem where applications won't add mesh support without users, and users won't adopt mesh without applications.
 
 deadmesh sits in the middle:
 1. **Mesh side**: Speaks fluent Meshtastic (protobuf over LoRa serial with proper API handshake)
 2. **Internet side**: Speaks every protocol your applications already use
 3. **Bridges transparently**: Fragments outgoing requests, reassembles incoming responses
 
-**Result**: Your mesh network works with everything — email clients, web browsers, update tools, API services — without modifying a single line of application code.
+**Result**: Your mesh network works with everything: email clients, web browsers, update tools, API services, without modifying a single line of application code.
 
 ### Critical Scenarios This Enables
 
@@ -47,7 +47,7 @@ deadmesh sits in the middle:
 
 ## Features
 
-- **Universal Protocol Support**: HTTP/HTTPS, SMTP/IMAP, SOCKS4/5, WebSocket, FTP — if it runs over TCP/IP, it works
+- **Universal Protocol Support**: HTTP/HTTPS, SMTP/IMAP, SOCKS4/5, WebSocket, FTP, if it runs over TCP/IP, it works
 - **Transparent TLS Interception**: Inspect and cache HTTPS traffic with HTTP/1.1 ALPN negotiation to minimize mesh bandwidth
 - **Intelligent Fragmentation**: Automatically chunks large requests/responses into ~220-byte Meshtastic packets
 - **Serial API Handshake**: Proper `want_config` initialization — auto-discovers node ID, receives full mesh state on startup
@@ -474,11 +474,11 @@ Meshtastic uses a length-prefixed binary protocol over serial:
 └────────┴────────┴───────────┴───────────┴─────────────────┘
 ```
 
-The framing layer handles sync recovery — if magic bytes are lost mid-stream, the state machine re-synchronizes automatically.
+The framing layer handles sync recovery, if magic bytes are lost mid-stream, the state machine re-synchronizes automatically.
 
 ### Protocol Detection
 
-deadmesh auto-detects protocols by inspecting initial bytes — no configuration needed:
+deadmesh auto-detects protocols by inspecting initial bytes, no configuration needed:
 
 | Initial bytes | Protocol | Handler |
 |---|---|---|
@@ -688,7 +688,7 @@ Each component works standalone but the stack is designed to thrive together —
 
 ## License
 
-MIT License — see [LICENSE](docs/LICENSE)
+MIT License — see [LICENSE](LICENSE)
 
 Includes:
 - [Meshtastic Protobufs](https://github.com/meshtastic/protobufs) (GPL v3)
