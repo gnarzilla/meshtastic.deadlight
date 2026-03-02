@@ -174,9 +174,12 @@ $(GEN_DIR) $(GEN_DIR)/meshtastic:
 
 $(GEN_DIR)/meshtastic/%.pb.c $(GEN_DIR)/meshtastic/%.pb.h: $(PROTO_DIR)/%.proto | $(GEN_DIR)/meshtastic
 	@echo "Generating nanopb files from $< ..."
-	@python3 $(NANOPB_DIR)/generator/nanopb_generator.py \
-		-I $(PROTO_BASE_DIR) \
-		-D $(GEN_DIR) $<
+	@PROTO_NAME=$$(basename $< .proto); \
+	protoc \
+		--plugin=protoc-gen-nanopb=$(NANOPB_DIR)/generator/protoc-gen-nanopb \
+		--proto_path=$(PROTO_BASE_DIR) \
+		--nanopb_out=$(GEN_DIR) \
+		meshtastic/$$PROTO_NAME.proto
 
 $(MESHTASTIC_PB_C) $(MESHTASTIC_PB_H): $(PROTO_FILES)
 

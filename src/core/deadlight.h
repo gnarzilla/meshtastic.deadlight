@@ -264,7 +264,7 @@ struct _DeadlightContext {
     gboolean shutdown_requested;
     GMutex   stats_mutex;
 
-    gchar **local_hostnames; 
+    gchar  **local_hostnames;    // NULL-terminated array of local hostnames
 };
 
 struct _DeadlightConnection {

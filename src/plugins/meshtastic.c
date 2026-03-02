@@ -92,6 +92,57 @@ static void handle_incoming_frame(MeshtasticPlugin *mp,
                                    DeadlightContext *context,
                                    const MeshFrame *frame);
 
+
+/* ─────────────────────────────────────────────────────────────
+ * nanopb callback helpers for Data.payload (bytes field)
+ *
+ * The .options file is not applied during plugin-mode codegen, so
+ * Data.payload is generated as pb_callback_t rather than a static
+ * pb_bytes_array_t.  These callbacks bridge the gap without requiring
+ * any change to the .proto or .options files.
+ * ───────────────────────────────────────────────────────────── */
+
+typedef struct {
+    const uint8_t *buf;
+    size_t         len;
+} PbEncodeCtx;
+
+typedef struct {
+    uint8_t buf[256];
+    size_t  len;
+} PbDecodeCtx;
+
+static bool payload_encode_cb(pb_ostream_t *stream,
+                               const pb_field_t *field,
+                               void * const *arg)
+{
+    const PbEncodeCtx *ctx = *arg;
+    if (!pb_encode_tag_for_field(stream, field)) return false;
+    return pb_encode_string(stream, ctx->buf, ctx->len);
+}
+
+static bool payload_decode_cb(pb_istream_t *stream,
+                               const pb_field_t *field,
+                               void **arg)
+{
+    PbDecodeCtx *ctx = *arg;
+    ctx->len = stream->bytes_left;
+    if (ctx->len > sizeof(ctx->buf)) {
+        /* Oversized payload — truncate and drain */
+        ctx->len = sizeof(ctx->buf);
+        if (!pb_read(stream, ctx->buf, ctx->len)) return false;
+        /* drain the remainder */
+        uint8_t discard[64];
+        while (stream->bytes_left > 0) {
+            size_t n = stream->bytes_left < sizeof(discard)
+                     ? stream->bytes_left : sizeof(discard);
+            if (!pb_read(stream, discard, n)) return false;
+        }
+        return true;
+    }
+    return pb_read(stream, ctx->buf, ctx->len);
+}
+
 /* ─────────────────────────────────────────────────────────────
  * Serial helpers
  * ───────────────────────────────────────────────────────────── */
@@ -103,7 +154,7 @@ static gboolean send_want_config(MeshtasticPlugin *mp) {
     /* Build ToRadio with want_config_id set to a non-zero value */
     meshtastic_ToRadio to_radio = meshtastic_ToRadio_init_default;
     to_radio.which_payload_variant = meshtastic_ToRadio_want_config_id_tag;
-    to_radio.want_config_id = 0xDEAD1234;  /* Any non-zero value */
+    to_radio.payload_variant.want_config_id = 0xDEAD1234;  /* Any non-zero value */
 
     /* Encode protobuf */
     uint8_t pb_buf[128];
@@ -357,6 +408,17 @@ static void handle_incoming_frame(MeshtasticPlugin *mp,
                                    DeadlightContext *context,
                                    const MeshFrame *frame) {
     meshtastic_FromRadio from_radio = meshtastic_FromRadio_init_default;
+
+    /* Pre-wire decode callback for Data.payload — must be set before
+     * pb_decode so nanopb calls it when it hits the payload field.   */
+    PbDecodeCtx decoded_payload = {0};
+    from_radio.payload_variant.packet
+              .payload_variant.decoded
+              .payload.funcs.decode = payload_decode_cb;
+    from_radio.payload_variant.packet
+              .payload_variant.decoded
+              .payload.arg = &decoded_payload;
+
     pb_istream_t istream = pb_istream_from_buffer(frame->payload, frame->len);
 
     if (!pb_decode(&istream, meshtastic_FromRadio_fields, &from_radio)) {
@@ -368,39 +430,39 @@ static void handle_incoming_frame(MeshtasticPlugin *mp,
     /* Log ALL FromRadio variants for debugging */
     switch (from_radio.which_payload_variant) {
         case meshtastic_FromRadio_packet_tag: {
-            meshtastic_MeshPacket *pkt = &from_radio.packet;
+            meshtastic_MeshPacket *pkt = &from_radio.payload_variant.packet;
             if (pkt->which_payload_variant == meshtastic_MeshPacket_decoded_tag) {
                 g_info("Meshtastic: packet from %08x port=%d len=%u %s",
                        pkt->from,
-                       pkt->decoded.portnum,
-                       pkt->decoded.payload.size,
-                       (pkt->decoded.portnum == (meshtastic_PortNum)mp->custom_port)
+                       pkt->payload_variant.decoded.portnum,
+                       decoded_payload.len,
+                       (pkt->payload_variant.decoded.portnum == (meshtastic_PortNum)mp->custom_port)
                            ? "[DEADMESH]" : "[passthrough]");
 
                 /* Text messages — log them for visibility */
-                if (pkt->decoded.portnum == meshtastic_PortNum_TEXT_MESSAGE_APP) {
-                    gchar *text = g_strndup((const gchar *)pkt->decoded.payload.bytes,
-                                            pkt->decoded.payload.size);
+                if (pkt->payload_variant.decoded.portnum == meshtastic_PortNum_TEXT_MESSAGE_APP) {
+                    gchar *text = g_strndup((const gchar *)decoded_payload.buf,
+                                            decoded_payload.len);
                     g_info("Meshtastic: TEXT from %08x: %s", pkt->from, text);
                     g_free(text);
                 }
 
                 /* Position updates */
-                if (pkt->decoded.portnum == meshtastic_PortNum_POSITION_APP) {
+                if (pkt->payload_variant.decoded.portnum == meshtastic_PortNum_POSITION_APP) {
                     g_debug("Meshtastic: POSITION from %08x (%u bytes)",
-                            pkt->from, pkt->decoded.payload.size);
+                            pkt->from, decoded_payload.len);
                 }
 
                 /* Telemetry */
-                if (pkt->decoded.portnum == meshtastic_PortNum_TELEMETRY_APP) {
+                if (pkt->payload_variant.decoded.portnum == meshtastic_PortNum_TELEMETRY_APP) {
                     g_debug("Meshtastic: TELEMETRY from %08x (%u bytes)",
-                            pkt->from, pkt->decoded.payload.size);
+                            pkt->from, decoded_payload.len);
                 }
 
                 /* NodeInfo */
-                if (pkt->decoded.portnum == meshtastic_PortNum_NODEINFO_APP) {
+                if (pkt->payload_variant.decoded.portnum == meshtastic_PortNum_NODEINFO_APP) {
                     g_debug("Meshtastic: NODEINFO from %08x (%u bytes)",
-                            pkt->from, pkt->decoded.payload.size);
+                            pkt->from, decoded_payload.len);
                 }
             } else {
                 g_debug("Meshtastic: encrypted packet from %08x (can't decode)",
@@ -410,23 +472,23 @@ static void handle_incoming_frame(MeshtasticPlugin *mp,
         }
         case meshtastic_FromRadio_my_info_tag:
             g_info("Meshtastic: received MyNodeInfo (node_num=%u)",
-                   from_radio.my_info.my_node_num);
+                   from_radio.payload_variant.my_info.my_node_num);
             if (mp->local_node_id == 0) {
-                mp->local_node_id = from_radio.my_info.my_node_num;
+                mp->local_node_id = from_radio.payload_variant.my_info.my_node_num;
                 g_info("Meshtastic: auto-detected local node ID: %08x",
                        mp->local_node_id);
             }
             break;
         case meshtastic_FromRadio_node_info_tag:
             g_debug("Meshtastic: NodeInfo update for %08x",
-                    from_radio.node_info.num);
+                    from_radio.payload_variant.node_info.num);
             break;
         case meshtastic_FromRadio_config_tag:
             g_debug("Meshtastic: device config received");
             break;
         case meshtastic_FromRadio_log_record_tag:
             g_debug("Meshtastic: device log: %s",
-                    from_radio.log_record.message);
+                    from_radio.payload_variant.log_record.message);
             break;
         default:
             g_debug("Meshtastic: FromRadio variant %d",
@@ -438,12 +500,12 @@ static void handle_incoming_frame(MeshtasticPlugin *mp,
     if (from_radio.which_payload_variant != meshtastic_FromRadio_packet_tag)
         return;
 
-    meshtastic_MeshPacket *pkt = &from_radio.packet;
+    meshtastic_MeshPacket *pkt = &from_radio.payload_variant.packet;
 
     if (pkt->which_payload_variant != meshtastic_MeshPacket_decoded_tag)
         return;
 
-    if (pkt->decoded.portnum != (meshtastic_PortNum)mp->custom_port)
+    if (pkt->payload_variant.decoded.portnum != (meshtastic_PortNum)mp->custom_port)
         return;
 
     /* ... rest of the original handle_incoming_frame code for session routing ... */
@@ -455,8 +517,8 @@ static void handle_incoming_frame(MeshtasticPlugin *mp,
         return;
     }
 
-    const pb_byte_t *raw     = pkt->decoded.payload.bytes;
-    size_t           raw_len = pkt->decoded.payload.size;
+    const pb_byte_t *raw     = decoded_payload.buf;
+    size_t           raw_len = decoded_payload.len;
 
     if (raw_len < 8) {
         g_warning("Meshtastic: packet from %08x too short (%zu bytes)",
@@ -532,16 +594,19 @@ static gboolean send_chunk(MeshtasticPlugin *mp,
     memcpy(chunk_buf + 8, payload, len);
     size_t chunk_total = 8 + len;
 
-    /* Encode Data sub-message */
+    /* Encode Data sub-message — payload uses a nanopb encode callback
+     * because Data.payload is generated as pb_callback_t (options file
+     * not applied during plugin-mode codegen).                         */
+    PbEncodeCtx payload_ctx = { chunk_buf, chunk_total };
     meshtastic_Data pb_data = meshtastic_Data_init_default;
-    pb_data.portnum      = (meshtastic_PortNum)mp->custom_port;
-    pb_data.payload.size = (pb_size_t)chunk_total;
-    memcpy(pb_data.payload.bytes, chunk_buf, chunk_total);
+    pb_data.portnum              = (meshtastic_PortNum)mp->custom_port;
+    pb_data.payload.funcs.encode = payload_encode_cb;
+    pb_data.payload.arg          = &payload_ctx;
 
     /* Encode MeshPacket */
     meshtastic_MeshPacket packet = meshtastic_MeshPacket_init_default;
     packet.which_payload_variant = meshtastic_MeshPacket_decoded_tag;
-    packet.decoded               = pb_data;
+    packet.payload_variant.decoded = pb_data;
     packet.from                  = mp->local_node_id;
     packet.id                    = (uint32_t)conn->mesh_session_id;
     packet.hop_limit             = 3;
@@ -559,7 +624,7 @@ static gboolean send_chunk(MeshtasticPlugin *mp,
     /* Encode ToRadio wrapper */
     meshtastic_ToRadio to_radio = meshtastic_ToRadio_init_default;
     to_radio.which_payload_variant = meshtastic_ToRadio_packet_tag;
-    to_radio.packet                = packet;
+    to_radio.payload_variant.packet = packet;
 
     uint8_t to_buf[700];
     pb_ostream_t tostream = pb_ostream_from_buffer(to_buf, sizeof(to_buf));
