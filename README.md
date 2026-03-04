@@ -24,7 +24,7 @@ Part of the [Deadlight ecosystem](https://deadlight.boo) secure, performant, pri
 
 Think of it as giving your Meshtastic network the capabilities of a satellite terminal, running on $30 hardware with zero monthly fees.
 
-![deadmesh proxy (no lora)](src/assets/output.gif)
+![deadmesh Web UI](src/assets/Deadlight-Mesh-webUI.gif)
 
 ## Why This Exists
 
@@ -58,8 +58,6 @@ deadmesh sits in the middle:
 - **Hardware Flexibility**: USB serial, Bluetooth, or TCP-connected radios
 - **Auto-Detection**: Auto-discovers Meshtastic devices on serial ports and auto-detects local node ID from device
 - **Embedded Dashboard**: Real-time gateway monitor with SSE streaming, self-contained in the binary, no external assets
-
-![deadmesh Web UI](src/assets/Deadlight-Mesh-webUI.gif)
 
 ## Getting Started
 
