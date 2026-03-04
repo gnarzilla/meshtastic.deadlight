@@ -6,7 +6,7 @@ Part of the [Deadlight ecosystem](https://deadlight.boo) secure, performant, pri
 
 [![deadmesh](https://meshtastic.deadlight.boo/favicon.ico)](https://meshtastic.deadlight.boo) [Project Blog](https://meshtastic.deadlight.boo) · [Why This Exists](#why-this-exists) · [Getting Started](#getting-started) · [Hardware](#hardware) · [Dashboard](#dashboard) · [Usage](#usage) · [Configuration](#configuration) · [How It Works](#how-it-works) · [Real-World Use Cases](#real-world-use-cases) · [Performance](#performance) · [Roadmap](#roadmap) · [License](#license)
 
-![deadmesh Web UI](src/assets/Deadlight-Mesh-webUI.gif)
+![deadmesh live node](src/assets/deadmesh_live_node.gif)
 
 ## Overview
 
@@ -58,6 +58,8 @@ deadmesh sits in the middle:
 - **Hardware Flexibility**: USB serial, Bluetooth, or TCP-connected radios
 - **Auto-Detection**: Auto-discovers Meshtastic devices on serial ports and auto-detects local node ID from device
 - **Embedded Dashboard**: Real-time gateway monitor with SSE streaming, self-contained in the binary, no external assets
+
+![deadmesh Web UI](src/assets/Deadlight-Mesh-webUI.gif)
 
 ## Getting Started
 
