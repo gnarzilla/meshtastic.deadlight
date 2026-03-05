@@ -6,7 +6,7 @@ Part of the [Deadlight ecosystem](https://deadlight.boo) secure, performant, pri
 
 [![deadmesh](https://meshtastic.deadlight.boo/favicon.ico)](https://meshtastic.deadlight.boo) [Project Blog](https://meshtastic.deadlight.boo) · [Why This Exists](#why-this-exists) · [Getting Started](#getting-started) · [Hardware](#hardware) · [Dashboard](#dashboard) · [Usage](#usage) · [Configuration](#configuration) · [How It Works](#how-it-works) · [Real-World Use Cases](#real-world-use-cases) · [Performance](#performance) · [Roadmap](#roadmap) · [License](#license)
 
-![mesh dashboadd](src/assets/live-mesh-dssh.gif)
+![mesh dashboadd](src/assets/live-mesh-dash.gif)
 
 ## Overview
 
