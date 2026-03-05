@@ -6,7 +6,7 @@ Part of the [Deadlight ecosystem](https://deadlight.boo) secure, performant, pri
 
 [![deadmesh](https://meshtastic.deadlight.boo/favicon.ico)](https://meshtastic.deadlight.boo) [Project Blog](https://meshtastic.deadlight.boo) · [Why This Exists](#why-this-exists) · [Getting Started](#getting-started) · [Hardware](#hardware) · [Dashboard](#dashboard) · [Usage](#usage) · [Configuration](#configuration) · [How It Works](#how-it-works) · [Real-World Use Cases](#real-world-use-cases) · [Performance](#performance) · [Roadmap](#roadmap) · [License](#license)
 
-![deadmesh live node](src/assets/deadmesh_live_node.gif)
+![mesh dashboadd](src/assets/live-mesh-dssh.gif)
 
 ## Overview
 
@@ -23,6 +23,8 @@ Part of the [Deadlight ecosystem](https://deadlight.boo) secure, performant, pri
 - Live mesh visibility: see every node, position, telemetry, and text message on your network
 
 Think of it as giving your Meshtastic network the capabilities of a satellite terminal, running on $30 hardware with zero monthly fees.
+
+![deadmesh live node](src/assets/deadmesh_live_node.gif)
 
 ## Why This Exists
 
