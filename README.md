@@ -6,7 +6,7 @@ Part of the [Deadlight ecosystem](https://deadlight.boo) secure, performant, pri
 
 [![deadmesh](https://meshtastic.deadlight.boo/favicon.ico)](https://meshtastic.deadlight.boo) [Project Blog](https://meshtastic.deadlight.boo) · [Why This Exists](#why-this-exists) · [Getting Started](#getting-started) · [Hardware](#hardware) · [Dashboard](#dashboard) · [Usage](#usage) · [Configuration](#configuration) · [How It Works](#how-it-works) · [Real-World Use Cases](#real-world-use-cases) · [Performance](#performance) · [Roadmap](#roadmap) · [License](#license)
 
-![deadmesh Web UI](src/assets/Deadlight-Mesh-webUI.gif)
+![deadmesh live node](src/assets/deadmesh_live_node.gif)
 
 ## Overview
 
@@ -23,8 +23,6 @@ Part of the [Deadlight ecosystem](https://deadlight.boo) secure, performant, pri
 - Live mesh visibility: see every node, position, telemetry, and text message on your network
 
 Think of it as giving your Meshtastic network the capabilities of a satellite terminal, running on $30 hardware with zero monthly fees.
-
-![deadmesh proxy (no lora)](src/assets/output.gif)
 
 ## Why This Exists
 
@@ -58,6 +56,8 @@ deadmesh sits in the middle:
 - **Hardware Flexibility**: USB serial, Bluetooth, or TCP-connected radios
 - **Auto-Detection**: Auto-discovers Meshtastic devices on serial ports and auto-detects local node ID from device
 - **Embedded Dashboard**: Real-time gateway monitor with SSE streaming, self-contained in the binary, no external assets
+
+![deadmesh Web UI](src/assets/Deadlight-Mesh-webUI.gif)
 
 ## Getting Started
 
@@ -698,18 +698,3 @@ Includes:
 
 **Status**: v1.0.1 — proxy verified, mesh serial active, 80+ nodes visible | **Maintained by**: [@gnarzilla](https://github.com/gnarzilla) | [deadlight.boo](https://deadlight.boo)
 ```
-
-## Key Changes from Original
-
-| Section | What Changed |
-|---|---|
-| **Overview** | Added "live mesh visibility" bullet |
-| **Features** | Added serial API handshake, live mesh visibility, auto-detect node ID, HTTP/1.1 ALPN |
-| **Prerequisites** | Added json-glib-1.0, Python/nanopb, meshtastic CLI as optional |
-| **Getting Started** | Rewrote with absolute cert paths, added expected startup output, added WSL section |
-| **Config** | Added `custom_port = 100`, `mesh_node_id = 0` for auto-detect, absolute path warning |
-| **How It Works** | Added startup sequence, serial framing diagram, packet type table |
-| **Hardware** | Added tested hardware table with verified Wio Tracker |
-| **Roadmap** | Added v1.0.1 section with everything verified tonight, reorganized v1.1 |
-| **Build Details** | New section with dependencies and build output |
-| **Status line** | Updated to "v1.0.1 — proxy verified, mesh serial active, 80+ nodes visible" |
