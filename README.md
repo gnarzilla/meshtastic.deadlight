@@ -6,7 +6,7 @@ Part of the [Deadlight ecosystem](https://deadlight.boo) secure, performant, pri
 
 [![deadmesh](https://meshtastic.deadlight.boo/favicon.ico)](https://meshtastic.deadlight.boo) [Project Blog](https://meshtastic.deadlight.boo) · [Why This Exists](#why-this-exists) · [Getting Started](#getting-started) · [Hardware](#hardware) · [Dashboard](#dashboard) · [Usage](#usage) · [Configuration](#configuration) · [How It Works](#how-it-works) · [Real-World Use Cases](#real-world-use-cases) · [Performance](#performance) · [Roadmap](#roadmap) · [License](#license)
 
-![deadmesh live node](src/assets/deadmesh_live_node.gif)
+![mesh dashboard](src/assets/live-mesh-dash.gif)
 
 ## Overview
 
@@ -23,6 +23,8 @@ Part of the [Deadlight ecosystem](https://deadlight.boo) secure, performant, pri
 - Live mesh visibility: see every node, position, telemetry, and text message on your network
 
 Think of it as giving your Meshtastic network the capabilities of a satellite terminal, running on $30 hardware with zero monthly fees.
+
+![deadmesh live node](src/assets/deadmesh_live_node.gif)
 
 ## Why This Exists
 
@@ -45,7 +47,7 @@ deadmesh sits in the middle:
 
 ## Features
 
-- **Universal Protocol Support**: HTTP/HTTPS, SMTP/IMAP, SOCKS4/5, WebSocket, FTP, if it runs over TCP/IP, it works
+- **Universal Protocol Support**: HTTP/HTTPS, SMTP/IMAP, SOCKS4/5, WebSocket, FTP — if it runs over TCP/IP, it works
 - **Transparent TLS Interception**: Inspect and cache HTTPS traffic with HTTP/1.1 ALPN negotiation to minimize mesh bandwidth
 - **Intelligent Fragmentation**: Automatically chunks large requests/responses into ~220-byte Meshtastic packets
 - **Serial API Handshake**: Proper `want_config` initialization — auto-discovers node ID, receives full mesh state on startup
@@ -56,6 +58,7 @@ deadmesh sits in the middle:
 - **Hardware Flexibility**: USB serial, Bluetooth, or TCP-connected radios
 - **Auto-Detection**: Auto-discovers Meshtastic devices on serial ports and auto-detects local node ID from device
 - **Embedded Dashboard**: Real-time gateway monitor with SSE streaming, self-contained in the binary, no external assets
+- **Live Node Table**: Persistent mesh node database — names, hops, SNR, battery, position, last heard — updated from every packet type
 
 ![deadmesh Web UI](src/assets/Deadlight-Mesh-webUI.gif)
 
@@ -233,18 +236,17 @@ deadmesh ships with a real-time gateway dashboard embedded directly in the binar
 **Access**: `http://localhost:8081` (configurable via `plugin.stats.web_port`)
 
 **Features**:
-- Live stats: active links, packets relayed, bytes bridged, gateway uptime
+- Live stats: active links, packets relayed, bytes bridged, mesh node count, gateway uptime
+- Live mesh node table: node ID, name, hops, SNR, battery level, GPS position indicator, last heard age (ticks in real time)
+- Sortable columns — click any header to sort, click again to reverse
 - Gateway log stream via SSE (Server-Sent Events) — zero polling
-- Mesh links panel showing active protocol connections
+- Tabbed left panel: Mesh Nodes (default) and Proxy Links
 - Green RF terminal aesthetic with antenna favicon in browser tab
-- Auto-scroll log with toggle
 
 Build with dashboard support:
 ```bash
 make clean && make UI=1
 ```
-
-The dashboard uses the same green-on-black theme as the project identity. Mesh-layer data (node positions, telemetry, text messages, RSSI, hop counts) is decoded by the gateway and will populate the Mesh Links panel as the UI evolves.
 
 ## Usage
 
@@ -327,9 +329,21 @@ curl -x http://localhost:8080 \
 ssh -o ProxyCommand="nc -X 5 -x localhost:8080 %h %p" user@remote-server
 ```
 
-### Meshtastic CLI (optional, for testing)
+### Testing with One Device
 
-The Python `meshtastic` CLI is useful for verifying radio connectivity before running deadmesh:
+You don't need a second radio to test the proxy and fragmentation logic. The mesh simulator generates synthetic mesh sessions:
+
+```bash
+# Run the gateway in one terminal
+./bin/deadmesh -c deadmesh.conf -v
+
+# In another terminal, drive a simulated mesh client session
+./tools/mesh-sim --gateway localhost:8080 --target http://example.com
+```
+
+This exercises the full reassembly and session routing path without any LoRa hardware. To test actual over-the-air proxy sessions you need a second Meshtastic device configured as a client.
+
+### Meshtastic CLI (optional, for testing)
 
 ```bash
 pip install meshtastic
@@ -436,10 +450,10 @@ Multiple deadmesh gateways on the same channel will announce themselves, allowin
 2. Send want_config handshake (ToRadio protobuf)
 3. Receive MyNodeInfo → auto-detect local node ID
 4. Receive device config, module config, channel config
-5. Receive NodeInfo for all known mesh nodes
+5. Receive NodeInfo for all known mesh nodes → populate node table
 6. Begin receiving live mesh packets (position, telemetry, text, etc.)
 7. Filter for custom portnum (100) for proxy session traffic
-8. All other packets logged for mesh visibility
+8. All other packets update node table (hops, SNR, battery, position)
 ```
 
 ### Packet Flow
@@ -474,7 +488,7 @@ Meshtastic uses a length-prefixed binary protocol over serial:
 └────────┴────────┴───────────┴───────────┴─────────────────┘
 ```
 
-The framing layer handles sync recovery, if magic bytes are lost mid-stream, the state machine re-synchronizes automatically.
+The framing layer handles sync recovery — if magic bytes are lost mid-stream, the state machine re-synchronizes automatically.
 
 ### Protocol Detection
 
@@ -494,11 +508,20 @@ deadmesh auto-detects protocols by inspecting initial bytes, no configuration ne
 | Port | Type | Handling |
 |---|---|---|
 | 1 | TEXT_MESSAGE | Logged for mesh visibility |
-| 3 | POSITION | Logged (lat/lon/alt) |
-| 4 | NODEINFO | Logged (node database) |
+| 3 | POSITION | Node table updated (lat/lon/alt) |
+| 4 | NODEINFO | Node table updated (name, position, SNR) |
 | 5 | ROUTING | Logged |
-| 67 | TELEMETRY | Logged (battery, airtime, etc.) |
+| 67 | TELEMETRY | Node table updated (battery level) |
 | 100 | DEADMESH (custom) | Routed to proxy session manager |
+
+### Node Table
+
+Every packet received updates the in-memory node table keyed by node ID. The table persists for the lifetime of the gateway process and is exposed via `/api/nodes`. Fields populated per source:
+
+- **NodeInfo (startup dump)**: short name, long name, position, SNR, last heard timestamp
+- **Any decoded packet header**: hops away (`hop_start - hop_limit`), SNR, last heard
+- **POSITION_APP**: latitude, longitude, altitude
+- **TELEMETRY_APP**: battery level
 
 ### Security Model
 
@@ -577,7 +600,7 @@ deadmesh auto-detects protocols by inspecting initial bytes, no configuration ne
 
 ## Roadmap
 
-### v1.0.1 (Current)
+### v1.1 (Current)
 - [x] HTTP/HTTPS/SOCKS4/SOCKS5 proxy — verified working
 - [x] TLS interception with upstream certificate mimicry
 - [x] Connection pooling with TLS session reuse
@@ -588,22 +611,28 @@ deadmesh auto-detects protocols by inspecting initial bytes, no configuration ne
 - [x] Plugin system — ad blocker, rate limiter, meshtastic transport
 - [x] Mesh simulator for development (`tools/mesh-sim`)
 - [x] WSL2 support via USB/IP passthrough
+- [x] Live node table in dashboard — names, hops, SNR, battery, position, last heard
+- [x] Sortable node table columns
+- [x] Real-time last-heard age (client-side tick, no polling)
+- [x] Tabbed dashboard panel (Mesh Nodes / Proxy Links)
+- [x] `/api/nodes` endpoint — full node table as JSON
+- [x] Node table persisted in `DeadlightContext` — accessible to all subsystems
 
-### v1.1 (Q2 2026)
-- [ ] Mesh node table in dashboard UI (positions, telemetry, last heard)
-- [ ] SSE streaming of mesh packet events to dashboard
+### v1.2 (Next)
+- [ ] End-to-end proxy session test over real LoRa
+- [ ] Node topology map — visualize mesh graph from hop data
+- [ ] Text message panel — display mesh chat in dashboard
+- [ ] SSE push for node table updates (currently polls every 5s)
 - [ ] Adaptive fragmentation based on live mesh conditions
 - [ ] Exponential backoff retry
-- [ ] Pre-fetching for common resources
 - [ ] Android client app (native deadmesh on-device)
-- [ ] Node topology visualization in dashboard
 
-### v1.2 (Q3 2026)
+### v1.3
 - [ ] Multi-gateway coordination protocol
 - [ ] Offline message queue (store-and-forward when gateway unreachable)
 - [ ] Per-client/protocol bandwidth shaping
 - [ ] WebRTC signaling over mesh (peer-to-peer voice/video)
-- [ ] Per-node RSSI, hop count, LoRa stats in dashboard
+- [ ] Per-node RSSI, airtime, channel utilization in dashboard
 
 ### v2.0 (Future)
 - [ ] Full IPv6 support
@@ -658,7 +687,6 @@ See [CONTRIBUTING.md](docs/CONTRIBUTING.md) for guidelines.
 
 - **Issues**: [GitHub Issues](https://github.com/gnarzilla/meshtastic.deadlight/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/gnarzilla/meshtastic.deadlight/discussions)
-- **Matrix**: `#deadlight-mesh:matrix.org`
 - **Blog**: [meshtastic.deadlight.boo](https://meshtastic.deadlight.boo)
 - **Support development**: [ko-fi/gnarzilla](https://ko-fi.com/gnarzilla)
 
@@ -674,7 +702,7 @@ deadmesh is one layer of a modular stack:
 | [vault.deadlight](https://github.com/gnarzilla/vault.deadlight) | C | Offline credential store, proxy integration |
 | [deadlight-bootstrap](https://v1.deadlight.boo) | JS | Cloudflare Workers + D1 framework |
 
-Each component works standalone but the stack is designed to thrive together — blog.deadlight posting over deadmesh via proxy.deadlight with vault.deadlight managing credentials, all running on solar-powered hardware in a field somewhere.
+Each component works standalone but the stack is designed to thrive together; blog.deadlight posting over deadmesh via proxy.deadlight with vault.deadlight managing credentials, all running on solar-powered hardware in a field somewhere.
 
 ## Legal & Safety
 
@@ -696,5 +724,4 @@ Includes:
 
 ---
 
-**Status**: v1.0.1 — proxy verified, mesh serial active, 80+ nodes visible | **Maintained by**: [@gnarzilla](https://github.com/gnarzilla) | [deadlight.boo](https://deadlight.boo)
-```
+**Status**: v1.1 — proxy verified, mesh serial active, 95+ nodes visible, live dashboard with node table | **Maintained by**: [@gnarzilla](https://github.com/gnarzilla) | [deadlight.boo](https://deadlight.boo)
