@@ -62,8 +62,6 @@ deadmesh sits in the middle:
 
 ![deadmesh live node](src/assets/deadmesh_live_node.gif)
 
-![deadmesh Web UI](src/assets/Deadlight-Mesh-webUI.gif)
-
 ## Getting Started
 
 ### Prerequisites
