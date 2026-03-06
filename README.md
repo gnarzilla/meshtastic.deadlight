@@ -616,7 +616,7 @@ Every packet received updates the in-memory node table keyed by node ID. The tab
 - [x] Real-time last-heard age (client-side tick, no polling)
 - [x] Tabbed dashboard panel (Mesh Nodes / Proxy Links)
 - [x] `/api/nodes` endpoint: full node table as JSON
-- [x] Node table persisted in `DeadlightContext` — accessible to all subsystems
+- [x] Node table persisted in `DeadlightContext` accessible to all subsystems
 
 ### v1.2 (Next)
 - [ ] End-to-end proxy session test over real LoRa
