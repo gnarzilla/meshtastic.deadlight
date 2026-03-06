@@ -47,18 +47,18 @@ deadmesh sits in the middle:
 
 ## Features
 
-- **Universal Protocol Support**: HTTP/HTTPS, SMTP/IMAP, SOCKS4/5, WebSocket, FTP — if it runs over TCP/IP, it works
+- **Universal Protocol Support**: HTTP/HTTPS, SMTP/IMAP, SOCKS4/5, WebSocket, FTP. If it runs over TCP/IP, it works
 - **Transparent TLS Interception**: Inspect and cache HTTPS traffic with HTTP/1.1 ALPN negotiation to minimize mesh bandwidth
 - **Intelligent Fragmentation**: Automatically chunks large requests/responses into ~220-byte Meshtastic packets
-- **Serial API Handshake**: Proper `want_config` initialization — auto-discovers node ID, receives full mesh state on startup
-- **Live Mesh Visibility**: Decodes all Meshtastic packet types — text messages, positions, telemetry, node info, routing
+- **Serial API Handshake**: Proper `want_config` initialization, auto-discovers node ID, receives full mesh state on startup
+- **Live Mesh Visibility**: Decodes all Meshtastic packet types (text messages, positions, telemetry, node info, routing)
 - **Store-and-Forward**: Delay-tolerant networking handles intermittent mesh connectivity
 - **Connection Pooling**: Reuses upstream connections aggressively with TLS session reuse to reduce LoRa airtime cost
 - **Plugin Extensibility**: Ad blocking, rate limiting, compression, caching, custom protocol handlers
 - **Hardware Flexibility**: USB serial, Bluetooth, or TCP-connected radios
 - **Auto-Detection**: Auto-discovers Meshtastic devices on serial ports and auto-detects local node ID from device
 - **Embedded Dashboard**: Real-time gateway monitor with SSE streaming, self-contained in the binary, no external assets
-- **Live Node Table**: Persistent mesh node database — names, hops, SNR, battery, position, last heard — updated from every packet type
+- **Live Node Table**: Persistent mesh node database; names, hops, SNR, battery, position, last heard, updated from every packet type
 
 ![deadmesh Web UI](src/assets/Deadlight-Mesh-webUI.gif)
 
@@ -231,15 +231,14 @@ meshtastic --set lora.hop_limit 3  # Adjust for network size
 
 ## Dashboard
 
-deadmesh ships with a real-time gateway dashboard embedded directly in the binary — no external files, no dependencies, nothing to serve separately.
+deadmesh ships with a real-time gateway dashboard embedded directly in the binary. No external files, no dependencies, nothing to serve separately.
 
 **Access**: `http://localhost:8081` (configurable via `plugin.stats.web_port`)
 
 **Features**:
 - Live stats: active links, packets relayed, bytes bridged, mesh node count, gateway uptime
 - Live mesh node table: node ID, name, hops, SNR, battery level, GPS position indicator, last heard age (ticks in real time)
-- Sortable columns — click any header to sort, click again to reverse
-- Gateway log stream via SSE (Server-Sent Events) — zero polling
+- Gateway log stream via SSE (Server-Sent Events) zero polling
 - Tabbed left panel: Mesh Nodes (default) and Proxy Links
 - Green RF terminal aesthetic with antenna favicon in browser tab
 
