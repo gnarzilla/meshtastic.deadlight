@@ -303,6 +303,54 @@
 
         .stream-mode { font-size: 10px; color: var(--text-dim); margin-left: 5px; letter-spacing: 0.05em; }
 
+        /* ── MESSAGE LIST ── */
+        .msg-list-wrap {
+            flex: 1;
+            overflow-y: auto;
+        }
+        .msg-list {
+            list-style: none;
+            padding: 0; margin: 0;
+        }
+        .msg-item {
+            padding: 10px 15px;
+            border-bottom: 1px solid var(--border);
+            display: grid;
+            grid-template-rows: auto auto;
+            gap: 4px;
+        }
+        .msg-item:hover { background: #0d1a0f; }
+        .msg-meta {
+            display: flex;
+            gap: 10px;
+            align-items: baseline;
+            font-size: 10px;
+            color: var(--text-dim);
+        }
+        .msg-from  { color: var(--accent); font-weight: bold; }
+        .msg-hops  { color: var(--text-dim); }
+        .msg-snr   { color: #6ee7b7; }
+        .msg-time  { margin-left: auto; color: var(--l-time); opacity: 0.7; }
+        .msg-text  {
+            font-size: 12px;
+            color: var(--text-main);
+            word-break: break-word;
+            white-space: pre-wrap;
+        }
+        .msg-empty {
+            padding: 30px;
+            text-align: center;
+            opacity: 0.4;
+            font-size: 12px;
+        }
+        .msg-new {
+            animation: msgflash 1.5s ease-out forwards;
+        }
+        @keyframes msgflash {
+            0%   { background: rgba(34,197,94,0.12); }
+            100% { background: transparent; }
+        }
+
         .icon-wrap {
             position: relative; display: flex;
             align-items: center; justify-content: center;
@@ -376,6 +424,7 @@
             <div class="tab-bar">
                 <button class="tab-btn active" data-tab="nodes">Mesh Nodes</button>
                 <button class="tab-btn" data-tab="links">Proxy Links</button>
+                <button class="tab-btn" data-tab="messages">Messages</button>
                 <span class="tab-live">LIVE</span>
             </div>
 
@@ -408,6 +457,15 @@
                         No active proxy links
                     </li>
                 </ul>
+            </div>
+
+            <!-- MESSAGES TAB -->
+            <div class="tab-pane" id="tab-messages">
+                <div class="msg-list-wrap">
+                    <ul class="msg-list" id="msg-list">
+                        <li class="msg-empty">No messages received yet</li>
+                    </ul>
+                </div>
             </div>
         </div>
 
@@ -628,6 +686,74 @@
 
     pollNodes();
     setInterval(pollNodes, NODE_POLL_MS);
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // MESSAGES
+    // ═══════════════════════════════════════════════════════════════════════
+    let lastMsgCount = 0;
+
+    function nodeDisplayName(nodeId) {
+        // Look up name from cached node table if available
+        if (!cachedNodes.length) return nodeId;
+        const node = cachedNodes.find(n => n.id === nodeId);
+        if (!node) return nodeId;
+        return node.long || node.short || nodeId;
+    }
+
+    function renderMessages(messages, total) {
+        const list = document.getElementById('msg-list');
+        if (!messages || messages.length === 0) {
+            list.innerHTML = '<li class="msg-empty">No messages received yet</li>';
+            lastMsgCount = 0;
+            return;
+        }
+
+        const isNew = total > lastMsgCount;
+        lastMsgCount = total;
+
+        // Render newest-first
+        const reversed = [...messages].reverse();
+        list.innerHTML = reversed.map((m, i) => {
+            const name    = escapeHtml(nodeDisplayName(m.from));
+            const text    = escapeHtml(m.text);
+            const hops    = m.hops > 0 ? `${m.hops} hop${m.hops > 1 ? 's' : ''}` : 'direct';
+            const snr     = m.snr !== 0 ? `${m.snr.toFixed(1)} dB` : '';
+            const ago     = formatAge(Math.floor(Date.now()/1000) - m.ts);
+            const newClass = (isNew && i === 0) ? 'msg-new' : '';
+            return `<li class="msg-item ${newClass}">
+                <div class="msg-meta">
+                    <span class="msg-from">${name}</span>
+                    <span class="msg-id" style="color:var(--text-dim);font-size:9px">${m.from}</span>
+                    <span class="msg-hops">${hops}</span>
+                    ${snr ? `<span class="msg-snr">${snr}</span>` : ''}
+                    <span class="msg-time">${ago} ago</span>
+                </div>
+                <div class="msg-text">${text}</div>
+            </li>`;
+        }).join('');
+
+        // Flash tab badge if not on messages tab
+        const activeTab = document.querySelector('.tab-btn.active');
+        if (isNew && activeTab && activeTab.dataset.tab !== 'messages') {
+            const msgBtn = document.querySelector('[data-tab="messages"]');
+            if (msgBtn) {
+                msgBtn.style.color = 'var(--accent)';
+                setTimeout(() => { msgBtn.style.color = ''; }, 3000);
+            }
+        }
+    }
+
+    async function pollMessages() {
+        try {
+            const res = await fetch(UI_BASE + '/api/messages');
+            if (!res.ok) return;
+            const data = await res.json();
+            renderMessages(data.messages || [], data.total || 0);
+        } catch (e) { /* silent */ }
+    }
+
+    pollMessages();
+    setInterval(pollMessages, 5000);
 
     // Age column ticks every second client-side — no server round-trip needed.
     // Recomputes age_s from last_heard timestamp and re-renders the table.

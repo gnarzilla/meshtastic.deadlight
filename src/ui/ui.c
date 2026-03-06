@@ -10,6 +10,7 @@
 
 static enum MHD_Result handle_api_connections(DeadlightContext *context, struct MHD_Connection *conn, const char *method);
 static enum MHD_Result handle_api_nodes(DeadlightContext *context, struct MHD_Connection *conn, const char *method);
+static enum MHD_Result handle_api_messages(DeadlightContext *context, struct MHD_Connection *conn, const char *method);
 
 /* ---------- Simple JSON helpers ---------- */
 static int json_response(struct MHD_Connection *conn, const char *json)
@@ -218,6 +219,9 @@ request_handler(void *cls,
     else if (strcmp(url, "/api/nodes") == 0 && strcmp(method, "GET") == 0)
         return handle_api_nodes(context, conn, method);
 
+    else if (strcmp(url, "/api/messages") == 0 && strcmp(method, "GET") == 0)
+        return handle_api_messages(context, conn, method);
+
     /* 404 */
     struct MHD_Response *resp = MHD_create_response_from_buffer(0, NULL, MHD_RESPMEM_PERSISTENT);
     int rc = MHD_queue_response(conn, MHD_HTTP_NOT_FOUND, resp);
@@ -251,6 +255,53 @@ void stop_ui_server(void)
         MHD_stop_daemon(ui_daemon);
         ui_daemon = NULL;
     }
+}
+
+
+/* ---------- API: /api/messages — mesh text message ring buffer ---------- */
+static enum MHD_Result
+handle_api_messages(DeadlightContext *context, struct MHD_Connection *conn, const char *method)
+{
+    if (strcmp(method, "GET") != 0) return MHD_NO;
+
+    GString *json_str = g_string_new("{\"messages\":[");
+    gboolean first = TRUE;
+
+    g_mutex_lock(&context->message_ring_mutex);
+
+    int count = context->message_ring_count;
+    int head  = context->message_ring_head;
+
+    /* Walk oldest-to-newest so the array is chronological.
+     * head points to the NEXT write slot, so oldest entry is at:
+     *   (head - count + RING_SIZE) % RING_SIZE                    */
+    for (int i = 0; i < count; i++) {
+        int idx = (head - count + i + MESH_MESSAGE_RING_SIZE) % MESH_MESSAGE_RING_SIZE;
+        MeshMessage *msg = &context->message_ring[idx];
+
+        if (!first) g_string_append(json_str, ",");
+        first = FALSE;
+
+        gchar *text_esc = g_strescape(msg->text, NULL);
+
+        g_string_append_printf(json_str, "{");
+        g_string_append_printf(json_str, "\"from\":\"%08x\",", msg->from_node);
+        g_string_append_printf(json_str, "\"text\":\"%s\",", text_esc);
+        g_string_append_printf(json_str, "\"ts\":%" G_GINT64_FORMAT ",", msg->timestamp);
+        g_string_append_printf(json_str, "\"hops\":%u,", (unsigned)msg->hops);
+        g_string_append_printf(json_str, "\"snr\":%.1f", (double)msg->snr);
+        g_string_append_printf(json_str, "}");
+
+        g_free(text_esc);
+    }
+
+    g_mutex_unlock(&context->message_ring_mutex);
+
+    g_string_append_printf(json_str, "],\"total\":%d}", count);
+
+    enum MHD_Result ret = json_response(conn, json_str->str);
+    g_string_free(json_str, TRUE);
+    return ret;
 }
 
 /* ---------- API: /api/connections ---------- */

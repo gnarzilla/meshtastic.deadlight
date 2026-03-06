@@ -501,11 +501,34 @@ static void handle_incoming_frame(MeshtasticPlugin *mp,
                        (portnum == (int)mp->custom_port)
                            ? "[DEADMESH]" : "[passthrough]");
 
-                /* Text messages */
+                /* Text messages — log and store in ring buffer */
                 if (portnum == meshtastic_PortNum_TEXT_MESSAGE_APP) {
                     gchar *text = g_strndup((const gchar *)decoded_payload.buf,
                                             decoded_payload.len);
                     g_info("Meshtastic: TEXT from %08x: %s", pkt->from, text);
+
+                    /* Append to context ring buffer */
+                    if (context->message_ring_head >= 0) {
+                        g_mutex_lock(&context->message_ring_mutex);
+
+                        MeshMessage *slot =
+                            &context->message_ring[context->message_ring_head];
+                        slot->from_node = pkt->from;
+                        slot->timestamp = g_get_real_time() / G_USEC_PER_SEC;
+                        slot->hops      = (pkt->hop_start > pkt->hop_limit)
+                                          ? (uint8_t)(pkt->hop_start - pkt->hop_limit)
+                                          : 0;
+                        slot->snr       = pkt->rx_snr;
+                        g_strlcpy(slot->text, text, sizeof(slot->text));
+
+                        context->message_ring_head =
+                            (context->message_ring_head + 1) % MESH_MESSAGE_RING_SIZE;
+                        if (context->message_ring_count < MESH_MESSAGE_RING_SIZE)
+                            context->message_ring_count++;
+
+                        g_mutex_unlock(&context->message_ring_mutex);
+                    }
+
                     g_free(text);
                 }
 

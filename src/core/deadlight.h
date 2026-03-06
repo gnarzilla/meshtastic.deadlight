@@ -227,23 +227,19 @@ typedef struct {
     gboolean  is_local;               /* TRUE for our own node            */
 } MeshNode;
 
-/*
- * ADD TO DeadlightContext struct:
- *
- *   GHashTable  *node_table;        // uint32 node_id -> MeshNode*
- *   GMutex       node_table_mutex;
- *
- * ADD TO context init (wherever other mutexes are initialised):
- *
- *   context->node_table = g_hash_table_new_full(
- *       g_direct_hash, g_direct_equal, NULL, g_free);
- *   g_mutex_init(&context->node_table_mutex);
- *
- * ADD TO context cleanup:
- *
- *   g_mutex_clear(&context->node_table_mutex);
- *   g_hash_table_destroy(context->node_table);
- */
+/* ═══════════════════════════════════════════════════════════
+ * MeshMessage — ring buffer entry for received text messages
+ * ═══════════════════════════════════════════════════════════ */
+
+#define MESH_MESSAGE_RING_SIZE  50   /* keep last N messages in memory */
+
+typedef struct {
+    uint32_t  from_node;          /* sender node ID                        */
+    char      text[233];          /* max Meshtastic text payload + NUL     */
+    gint64    timestamp;          /* unix seconds (g_get_real_time / 1e6)  */
+    uint8_t   hops;               /* hop_start - hop_limit from pkt header */
+    float     snr;                /* rx_snr from packet header             */
+} MeshMessage;
 
 struct _DeadlightContext {
     GMainLoop              *main_loop;
@@ -253,8 +249,14 @@ struct _DeadlightContext {
     DeadlightPluginManager *plugins;
     DeadlightVPNManager    *vpn;
     DeadlightMeshManager   *mesh;          /* NULL when mesh transport unused */
-    GHashTable             *node_table;     
-    GMutex                 node_table_mutex;
+    GHashTable             *node_table;
+    GMutex                  node_table_mutex;
+
+    /* Mesh message ring buffer — last MESH_MESSAGE_RING_SIZE text messages */
+    MeshMessage             message_ring[MESH_MESSAGE_RING_SIZE];
+    gint                    message_ring_head;   /* next write index (0-based, wraps) */
+    gint                    message_ring_count;  /* how many entries are valid        */
+    GMutex                  message_ring_mutex;
     GHashTable             *plugins_data;
     GHashTable             *connections;
     GHashTable             *certificates;

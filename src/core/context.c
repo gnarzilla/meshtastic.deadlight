@@ -26,6 +26,11 @@ DeadlightContext *deadlight_context_new(void) {
         g_direct_hash, g_direct_equal, NULL, g_free);
     g_mutex_init(&ctx->node_table_mutex);
 
+    /* Message ring buffer — zero-initialised by g_new0, just init the mutex */
+    ctx->message_ring_head  = 0;
+    ctx->message_ring_count = 0;
+    g_mutex_init(&ctx->message_ring_mutex);
+
     // Initialize statistics
     ctx->total_connections = 0;
     ctx->active_connections = 0;
@@ -78,6 +83,9 @@ void deadlight_context_free(DeadlightContext *ctx) {
         ctx->node_table = NULL;
     }
     g_mutex_clear(&ctx->node_table_mutex);
+
+    /* Message ring — just clear the mutex, entries are stack-allocated */
+    g_mutex_clear(&ctx->message_ring_mutex);
 
     // Stop worker pool
     if (ctx->worker_pool) {
