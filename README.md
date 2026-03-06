@@ -24,8 +24,6 @@ Part of the [Deadlight ecosystem](https://deadlight.boo) secure, performant, pri
 
 Think of it as giving your Meshtastic network the capabilities of a satellite terminal, running on $30 hardware with zero monthly fees.
 
-![vid19](src/assets/vid19.gif)
-
 ## Why This Exists
 
 Meshtastic networks are incredible for messaging and telemetry, but they weren't designed for general Internet access. Each protocol (HTTP, SMTP, DNS) would need custom mesh-aware implementations, a chicken-and-egg problem where applications won't add mesh support without users, and users won't adopt mesh without applications.
@@ -60,7 +58,7 @@ deadmesh sits in the middle:
 - **Embedded Dashboard**: Real-time gateway monitor with SSE streaming, self-contained in the binary, no external assets
 - **Live Node Table**: Persistent mesh node database; names, hops, SNR, battery, position, last heard, updated from every packet type
 
-![mesh dashboard](src/assets/live-mesh-dash.gif)
+![vid19](src/assets/vid19.gif)
 
 ## Getting Started
 
@@ -180,7 +178,7 @@ sudo usermod -a -G dialout $USER
 
 > **Note**: You must re-run `usbipd attach` from PowerShell each time the radio is unplugged, the PC sleeps, or WSL restarts.
 
-![deadmesh live node](src/assets/deadmesh_live_node.gif)
+![mesh dashboard](src/assets/live-mesh-dash.gif)
 
 ## Hardware
 
