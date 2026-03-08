@@ -1,0 +1,157 @@
+name: Build binary packages
+
+on:
+  workflow_dispatch:
+  workflow_call:
+  push:
+    branches:
+        - 'master'
+    tags:
+        - '*'
+
+jobs:
+  build_linux:
+    name: Build binary on Ubuntu 22.04
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Check out code from GitHub
+        uses: actions/checkout@v4
+        with:
+          path: nanopb
+          fetch-depth: "0"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --user --upgrade scons protobuf grpcio-tools pyinstaller
+          python3 -c 'import google.protobuf; print(google.protobuf.__file__)'
+
+      - name: Build binary package
+        run: |
+          cd nanopb
+          git clean -dxf
+          tools/make_linux_package.sh
+
+      - name: Fingerprint binary
+        run: |
+          openssl sha256 nanopb/dist/*.tar.gz
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          path: nanopb/dist/*.tar.gz
+          name: nanopb-binary-linux
+
+      - name: Test binary package
+        run: |
+          tar xzf nanopb/dist/*.tar.gz
+          cd nanopb-*/tests
+          python3 -m SCons
+
+      - name: Test examples
+        run: |
+          cd nanopb-*/examples
+          (cd simple; make; ./simple)
+          (cd network_server; make)
+          (cd using_union_messages; make)
+          (cd cmake_simple; mkdir build; cd build; cmake ..; make)
+          (cd cmake_relpath; mkdir build; cd build; cmake ..; make)
+
+      - name: Run build tests
+        run: |
+          cd nanopb-*/build-tests
+          (cd cmake_with_components; mkdir build; cd build; cmake ..; make)
+          (cd legacy_cmake_relpath; mkdir build; cd build; cmake ..; make)
+          (cd legacy_cmake_simple; mkdir build; cd build; cmake ..; make)
+
+  build_windows:
+    name: Build binary on Windows 2022
+    runs-on: windows-2022
+
+    steps:
+      - name: Check out code from GitHub
+        uses: actions/checkout@v4
+        with:
+          path: nanopb
+          fetch-depth: "0"
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          python3 -m pip install --user --upgrade scons protobuf grpcio-tools pyinstaller
+          python3 -c 'import google.protobuf; print(google.protobuf.__file__)'
+
+      - name: Build binary package
+        shell: bash
+        run: |
+          cd nanopb
+          git clean -dxf
+          tools/make_windows_package.sh
+
+      - name: Fingerprint binary
+        run: |
+          openssl sha256 nanopb/dist/*.zip
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          path: nanopb/dist/*.zip
+          name: nanopb-binary-windows
+
+      - name: Test binary package
+        shell: bash
+        run: |
+          powershell "Expand-Archive nanopb/dist/*.zip"
+          ls
+          cd nanopb-*/nanopb-*/tests
+          python3 -m SCons
+
+  build_macos:
+    name: Build binary on Mac OS X 14
+    runs-on: macos-14
+
+    steps:
+      - name: Check out code from GitHub
+        uses: actions/checkout@v4
+        with:
+          path: nanopb
+          fetch-depth: "0"
+
+      - name: Install dependencies
+        run: |
+          python3 -m venv venv
+          venv/bin/python3 -m pip install --upgrade scons protobuf grpcio-tools pyinstaller
+          venv/bin/python3 -c 'import google.protobuf; print(google.protobuf.__file__)'
+
+      - name: Build binary package
+        run: |
+          source venv/bin/activate
+          cd nanopb
+          git clean -dxf
+          tools/make_mac_package.sh
+
+      - name: Fingerprint binary
+        run: |
+          openssl sha256 nanopb/dist/*.tar.gz
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          path: nanopb/dist/*.tar.gz
+          name: nanopb-binary-macos
+
+      - name: Test binary package
+        run: |
+          tar xzf nanopb/dist/*.tar.gz
+          cd nanopb-*/tests
+          ../../venv/bin/python3 -m SCons
+          cd ../examples/simple
+          make
+          ./simple
+
+

@@ -1,0 +1,44 @@
+name: Test, build and pre-release weekly
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '32 1 * * 1'
+
+jobs:
+  compiler_tests:
+    uses: ./.github/workflows/compiler_tests.yml
+  
+  simulator_tests:
+    uses: ./.github/workflows/simulator_tests.yml
+  
+  olddistro_tests:
+    uses: ./.github/workflows/olddistro_tests.yml
+  
+  ios_swift_tests:
+    uses: ./.github/workflows/ios_swift_tests.yml
+  
+  platformio_tests:
+    uses: ./.github/workflows/platformio_tests.yml
+  
+  bazel_tests:
+    uses: ./.github/workflows/bazel.yml
+
+  cifuzz:
+    uses: ./.github/workflows/cifuzz.yml
+
+  meson:
+    uses: ./.github/workflows/meson.yml
+  
+  fil-c:
+    uses: ./.github/workflows/fil-c.yml
+
+  binary_packages:
+    needs: [compiler_tests, simulator_tests, olddistro_tests, ios_swift_tests, platformio_tests, cifuzz, fil-c]
+    uses: ./.github/workflows/binary_packages.yml
+
+  pypi_publish:
+    needs: binary_packages
+    uses: ./.github/workflows/pypi_publish.yml
+    secrets:
+      PYPI_API_KEY: ${{ secrets.PYPI_API_KEY }}
+

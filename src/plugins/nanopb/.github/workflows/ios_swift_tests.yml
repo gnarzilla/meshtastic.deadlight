@@ -1,0 +1,23 @@
+name: Build and test for Apple iOS swift
+
+on:
+  workflow_dispatch:
+  workflow_call:
+  push:
+    paths:
+      - '**spm**'
+      - '**swift**'
+  pull_request:
+    paths:
+      - '**spm**'
+      - '**swift**'
+
+jobs:
+  swift-build-run:
+    runs-on: macOS-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Build
+      run: swift build
+    - name: Run
+      run: swift test
