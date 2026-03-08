@@ -6,11 +6,6 @@ __pycache__/
 # Generated protobuf files
 src/plugins/protobufs/*
 
-# Generated nanopb output
-nanopb/generator-bin/
-nanopb/*.o
-nanopb/*.a
-
 # Meshtastic plugin build artifacts
 src/plugins/meshtastic/build/
 
