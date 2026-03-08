@@ -1,0 +1,22 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Generated protobuf files
+src/plugins/protobufs/*
+
+# Generated nanopb output
+nanopb/generator-bin/
+nanopb/*.o
+nanopb/*.a
+
+# Meshtastic plugin build artifacts
+src/plugins/meshtastic/build/
+
+# protobuf temp files
+.protobufs/
+
+# OS junk
+.DS_Store
+Thumbs.db
