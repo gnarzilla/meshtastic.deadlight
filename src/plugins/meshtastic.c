@@ -819,17 +819,54 @@ static void handle_incoming_frame(MeshtasticPlugin *mp,
         }
 
         case meshtastic_FromRadio_config_tag:
-            g_debug("Meshtastic: device config received");
-            break;
+                    g_debug("Meshtastic: device config received");
+                    break;
 
-        case meshtastic_FromRadio_log_record_tag:
-            g_debug("Meshtastic: device log: %s", log_message.buf);
-            break;
+                case meshtastic_FromRadio_moduleConfig_tag:
+                    g_debug("Meshtastic: module config received");
+                    break;
 
-        default:
-            g_debug("Meshtastic: FromRadio variant %d",
-                    from_radio.which_payload_variant);
-            break;
+                case meshtastic_FromRadio_channel_tag:
+                    g_debug("Meshtastic: channel config received");
+                    break;
+
+                case meshtastic_FromRadio_config_complete_id_tag:
+                    g_info("Meshtastic: config_complete (id=%u) -- mesh state sync done",
+                        from_radio.payload_variant.config_complete_id);
+                    break;
+
+                case meshtastic_FromRadio_rebooted_tag:
+                    g_info("Meshtastic: device rebooted");
+                    break;
+
+                case meshtastic_FromRadio_queueStatus_tag:
+                    g_debug("Meshtastic: queue status received");
+                    break;
+
+                case meshtastic_FromRadio_metadata_tag:
+                    g_debug("Meshtastic: device metadata received");
+                    break;
+
+                case meshtastic_FromRadio_fileInfo_tag:
+                    g_debug("Meshtastic: file info received");
+                    break;
+
+                case meshtastic_FromRadio_clientNotification_tag:
+                    g_debug("Meshtastic: client notification received");
+                    break;
+
+                case meshtastic_FromRadio_deviceuiConfig_tag:
+                    g_debug("Meshtastic: device UI config received");
+                    break;
+
+                case meshtastic_FromRadio_log_record_tag:
+                    g_debug("Meshtastic: device log: %s", log_message.buf);
+                    break;
+
+                default:
+                    g_debug("Meshtastic: unhandled FromRadio variant %d",
+                            from_radio.which_payload_variant);
+                    break;
     }
 
     /* === Gateway logic: only process custom port === */
@@ -869,7 +906,8 @@ static void handle_incoming_frame(MeshtasticPlugin *mp,
     const uint8_t *chunk_data = raw + 8;
     size_t         chunk_len  = raw_len - 8;
 
-    uint32_t session_id = (seq_num == 0) ? packet_id : packet_id;
+    /* Meshtastic reuses the same packet_id for every fragment in a set */
+    uint32_t session_id = packet_id;
 
     MeshSession *session = mesh_session_get_or_create(
         mp->sessions, src_node, session_id);
@@ -902,7 +940,6 @@ static void handle_incoming_frame(MeshtasticPlugin *mp,
             session->assembly_buf->len, session->conn->id);
 
     mesh_session_init_reassembly(session, 0);
-    (void)context;
 }
 
 /* ─────────────────────────────────────────────────────────────
