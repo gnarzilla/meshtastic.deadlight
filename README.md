@@ -6,7 +6,7 @@ Part of the [Deadlight ecosystem](https://github.com/gnarzilla#deadlight-ecosyst
 
 <img src="https://meshtastic.deadlight.boo/apple-touch-icon.png" width="32" height="32"> · [Project Blog](https://meshtastic.deadlight.boo) · [Why This Exists](#why-this-exists) · [Getting Started](#getting-started) · [Hardware](#hardware) · [Dashboard](#dashboard) · [Usage](#usage) · [Configuration](#configuration) · [How It Works](#how-it-works) · [Real-World Use Cases](#real-world-use-cases) · [Performance](#performance) · [Roadmap](#roadmap) · [License](#license)
 
-![mesh is more boring](src/assets/mesh_is_more_boring.gif)
+![Live long run](src/assets/long_run.gif)
 
 ## Overview
 
@@ -283,6 +283,8 @@ meshtastic --set lora.region US --set lora.modem_preset LONG_FAST
 meshtastic --set lora.tx_power 30  # Check local regulations
 meshtastic --set lora.hop_limit 3  # Adjust for network size
 ```
+
+![mesh is more boring](src/assets/mesh_is_more_boring.gif)
 
 ## Dashboard
 
