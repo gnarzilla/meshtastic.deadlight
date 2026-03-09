@@ -241,9 +241,9 @@ sudo usermod -a -G dialout $USER
 
 | Device | Chip | Connection | Status |
 |---|---|---|---|
-| **Seeed Wio Tracker L1** | nRF52840 + SX1262 | USB CDC (`/dev/ttyACM0`) | ✅ Verified |
+| **Seeed Wio Tracker L1** | nRF52840 + SX1262 | USB CDC (`/dev/ttyACM0`) | ✓ Verified |
 | RAK WisBlock (RAK4631) | nRF52840 + SX1262 | USB CDC | Expected to work |
-| Heltec LoRa 32 V3 | ESP32-S3 + SX1262 | USB CDC (CH9102) | Expected to work |
+| Heltec LoRa 32 V3 | ESP32-S3 + SX1262 | USB CDC (CH9102) | Testing |
 | Heltec V4 | ESP32-S3 | USB CDC | Expected to work |
 | Lilygo T-Beam | ESP32 + SX1276/8 | USB UART (CP2104) | Expected to work |
 | Lilygo T-Echo | nRF52840 + SX1262 | USB CDC | Expected to work |
