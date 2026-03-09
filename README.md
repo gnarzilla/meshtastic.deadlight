@@ -241,9 +241,9 @@ sudo usermod -a -G dialout $USER
 
 | Device | Chip | Connection | Status |
 |---|---|---|---|
-| **Seeed Wio Tracker L1** | nRF52840 + SX1262 | USB CDC (`/dev/ttyACM0`) | ✅ Verified |
+| **Seeed Wio Tracker L1** | nRF52840 + SX1262 | USB CDC (`/dev/ttyACM0`) | ✓ Verified |
 | RAK WisBlock (RAK4631) | nRF52840 + SX1262 | USB CDC | Expected to work |
-| Heltec LoRa 32 V3 | ESP32-S3 + SX1262 | USB CDC (CH9102) | Expected to work |
+| Heltec LoRa 32 V3 | ESP32-S3 + SX1262 | USB CDC (CH9102) | Testing |
 | Heltec V4 | ESP32-S3 | USB CDC | Expected to work |
 | Lilygo T-Beam | ESP32 + SX1276/8 | USB UART (CP2104) | Expected to work |
 | Lilygo T-Echo | nRF52840 + SX1262 | USB CDC | Expected to work |
@@ -682,6 +682,10 @@ Every packet received updates the in-memory node table keyed by node ID. The tab
 - [ ] Adaptive fragmentation based on live mesh conditions
 - [ ] Exponential backoff retry
 - [ ] Android client app (native deadmesh on-device)
+- [ ] `mesh://` scheme handler — gateway-side URL prefix for forced LoRa optimization
+- [ ] Smart mesh router — whitelist/blacklist/API substitution table
+- [ ] Content transformation pipeline — readability strip, image drop, size cap
+- [ ] Wikipedia plaintext fast path via MediaWiki API
 
 ### v1.3
 - [ ] Multi-gateway coordination protocol
@@ -689,6 +693,9 @@ Every packet received updates the in-memory node table keyed by node ID. The tab
 - [ ] Per-client/protocol bandwidth shaping
 - [ ] WebRTC signaling over mesh (peer-to-peer voice/video)
 - [ ] Per-node RSSI, airtime, channel utilization in dashboard
+- [ ] Per-domain transformation profiles
+- [ ] Automatic tier classification (ML-assisted or heuristic)
+- [ ] Client-side `mesh://` scheme handler for Android
 
 ### v2.0 (Future)
 - [ ] Full IPv6 support
