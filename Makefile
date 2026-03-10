@@ -91,7 +91,7 @@ PLUGIN_TARGETS = $(PLUGIN_BINDIR)/adblocker.so \
 #=============================================================================
 
 # Default target
-all: dirs $(MAIN_TARGET) plugins sim
+all: dirs $(MAIN_TARGET) plugins sim client
 
 # Create necessary directories
 dirs:
@@ -218,6 +218,33 @@ $(SIM_TARGET): tools/mesh-sim.c src/mesh/mesh_framing.c src/mesh/mesh_framing.h
 	@echo "Simulator built: $@"
 	@echo "  Run: ./$@ [--loss N] [--delay MS]"
 
+# ── deadmesh-client ─────────────────────────────────────────────────────────
+CLIENT_TARGET = $(BINDIR)/deadmesh-client
+
+client: dirs $(CLIENT_TARGET)
+
+$(CLIENT_TARGET): \
+		tools/client_main.c \
+		tools/client_transport.c \
+		src/mesh/mesh_framing.c \
+		src/mesh/mesh_session.c \
+		src/mesh/mesh_stream.c \
+		$(NANOPB_SOURCES) \
+		$(MESHTASTIC_PB_C) \
+		| $(BINDIR)
+	@echo "Building deadmesh-client..."
+	@$(CC) $(ALL_CFLAGS) $(NANOPB_CFLAGS) -o $@ \
+		tools/client_main.c \
+		tools/client_transport.c \
+		src/mesh/mesh_framing.c \
+		src/mesh/mesh_session.c \
+		src/mesh/mesh_stream.c \
+		$(NANOPB_SOURCES) \
+		$(MESHTASTIC_PB_C) \
+		$(ALL_LIBS)
+	@echo "Client built: $@"
+	@echo "  Run: ./$@ --gateway <node_id>"
+
 #=============================================================================
 # Utility Targets
 #=============================================================================
@@ -226,6 +253,7 @@ clean:
 	@echo "Cleaning build files..."
 	@rm -rf $(OBJDIR) $(BINDIR)
 	@rm -f $(SIM_TARGET)
+	@rm -f $(CLIENT_TARGET)
 	@rm -f src/ui/assets.c
 	@rm -f $(GEN_DIR)/*.pb.c $(GEN_DIR)/*.pb.h
 	@rm -rf $(GEN_DIR)
@@ -239,4 +267,4 @@ run-vpn: $(MAIN_TARGET)
 	@echo "Running $(PROJECT) with VPN gateway (requires root)..."
 	@sudo ./$(MAIN_TARGET) -v
 
-.PHONY: all dirs clean run run-vpn plugins sim
+.PHONY: all dirs clean run run-vpn plugins sim client

@@ -62,6 +62,7 @@ struct _MeshSession {
     MeshSessionState state;
     gint64           created_at;    /* g_get_monotonic_time()               */
     gint64           last_activity;
+    gpointer         user_data;
 
     /* Stats */
     uint64_t         packets_in;

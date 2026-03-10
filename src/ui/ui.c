@@ -35,14 +35,17 @@ void deadlight_sse_client_remove(DeadlightContext *context, GOutputStream *strea
     g_mutex_unlock(&context->sse_clients_mutex);
 }
 
-void deadlight_sse_broadcast(DeadlightContext *context,
-                              const gchar *event_type,
-                              const gchar *json_data)
+/* Payload struct for main-thread SSE dispatch */
+typedef struct {
+    DeadlightContext *context;
+    gchar            *frame;
+    gsize             frame_len;
+} SseBroadcastPayload;
+
+static gboolean sse_broadcast_on_main(gpointer user_data)
 {
-    /* Format: "event: <type>\ndata: <json>\n\n" */
-    gchar *frame = g_strdup_printf("event: %s\ndata: %s\n\n",
-                                   event_type, json_data);
-    gsize  frame_len = strlen(frame);
+    SseBroadcastPayload *p = user_data;
+    DeadlightContext *context = p->context;
 
     g_mutex_lock(&context->sse_clients_mutex);
 
@@ -52,7 +55,7 @@ void deadlight_sse_broadcast(DeadlightContext *context,
         GError *err = NULL;
         gsize written = 0;
         gboolean ok = g_output_stream_write_all(stream,
-                                                frame, frame_len,
+                                                p->frame, p->frame_len,
                                                 &written, NULL, &err);
         if (!ok || err) {
             g_clear_error(&err);
@@ -60,7 +63,6 @@ void deadlight_sse_broadcast(DeadlightContext *context,
         }
     }
 
-    /* Remove dead clients while still holding the lock */
     for (GList *l = dead; l; l = l->next) {
         GOutputStream *stream = l->data;
         context->sse_clients = g_list_remove(context->sse_clients, stream);
@@ -69,7 +71,28 @@ void deadlight_sse_broadcast(DeadlightContext *context,
     g_list_free(dead);
 
     g_mutex_unlock(&context->sse_clients_mutex);
-    g_free(frame);
+    g_free(p->frame);
+    g_free(p);
+    return G_SOURCE_REMOVE;
+}
+
+void deadlight_sse_broadcast(DeadlightContext *context,
+                              const gchar *event_type,
+                              const gchar *json_data)
+{
+    /* Build the frame string */
+    gchar *frame = g_strdup_printf("event: %s\ndata: %s\n\n",
+                                   event_type, json_data);
+
+    /* Dispatch the write onto the GLib default main context so it runs on
+     * the same thread as api.c's SSE timer — avoids concurrent writes to
+     * GOutputStream which is not thread-safe.                             */
+    SseBroadcastPayload *p = g_new0(SseBroadcastPayload, 1);
+    p->context   = context;
+    p->frame     = frame;
+    p->frame_len = strlen(frame);
+
+    g_main_context_invoke(NULL, sse_broadcast_on_main, p);
 }
 
 /* ---------- Simple JSON helpers ---------- */

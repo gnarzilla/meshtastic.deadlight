@@ -1,0 +1,582 @@
+/**
+ * client_transport.c — Meshtastic radio transport for deadmesh-client
+ *
+ * Implements the send/receive path connecting the proxy core to a
+ * Meshtastic radio. Mirrors the gateway's meshtastic.c transport but
+ * runs in the opposite direction: browser → mesh → gateway → internet.
+ *
+ * Radio connection modes (compile-time, default TCP):
+ *
+ *   TCP  (default):
+ *     Connects to Meshtastic app API at localhost:4403.
+ *     Same ToRadio/FromRadio protobuf framing as serial.
+ *     Works on Android (Termux) without root.
+ *
+ *   Serial (-DCLIENT_TRANSPORT_SERIAL):
+ *     Opens /dev/rfcomm0 (BT) or /dev/ttyACM0 (USB) directly.
+ *
+ * Wire protocol (same as gateway):
+ *   Out: seq(4LE) + total(4LE) + payload → Data → MeshPacket
+ *        → ToRadio → 0x94 0xC3 framing → radio fd
+ *   In:  0x94 0xC3 framing → FromRadio → portnum==custom_port
+ *        → strip 8-byte header → push to MeshSession pipe
+ */
+
+#include "client_transport.h"
+
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <termios.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
+#include <glib.h>
+
+/* nanopb + Meshtastic protobufs */
+#include "pb.h"
+#include "pb_encode.h"
+#include "pb_decode.h"
+#include "mesh.pb.h"
+#include "portnums.pb.h"
+
+#include "mesh_framing.h"
+#include "mesh_session.h"
+
+/* ─────────────────────────────────────────────────────────────
+ * Constants
+ * ───────────────────────────────────────────────────────────── */
+
+#define CLIENT_MESHTASTIC_TCP_PORT  4403
+#define CLIENT_MESHTASTIC_TCP_HOST  "127.0.0.1"
+#define CLIENT_FRAGMENT_SIZE        220
+#define CLIENT_SESSION_TIMEOUT_MS   60000
+
+/* ─────────────────────────────────────────────────────────────
+ * nanopb encode / decode callback helpers
+ *
+ * Data.payload is a pb_callback_t (plugin-mode codegen).
+ * We use the same pattern as meshtastic.c.
+ * ───────────────────────────────────────────────────────────── */
+
+typedef struct {
+    const uint8_t *buf;
+    size_t         len;
+} PbEncodeCtx;
+
+typedef struct {
+    uint8_t *buf;
+    size_t   len;       /* filled in by callback */
+    size_t   max;
+} PbDecodeCtx;
+
+static bool payload_encode_cb(pb_ostream_t *stream,
+                               const pb_field_iter_t *field,
+                               void * const *arg) {
+    const PbEncodeCtx *ctx = (const PbEncodeCtx *)*arg;
+    if (!pb_encode_tag_for_field(stream, field)) return false;
+    return pb_encode_string(stream, ctx->buf, ctx->len);
+}
+
+static bool payload_decode_cb(pb_istream_t *stream,
+                               const pb_field_iter_t *field,
+                               void **arg) {
+    (void)field;
+    PbDecodeCtx *ctx = (PbDecodeCtx *)*arg;
+    ctx->len = stream->bytes_left;
+    if (ctx->len > ctx->max) {
+        g_warning("client: payload too large (%zu > %zu), truncating",
+                  ctx->len, ctx->max);
+        ctx->len = ctx->max;
+    }
+    return pb_read(stream, ctx->buf, ctx->len);
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * Forward declarations
+ * ───────────────────────────────────────────────────────────── */
+
+static gpointer client_reader_thread(gpointer user_data);
+static void     handle_incoming_frame(ClientTransport *ct,
+                                       const MeshFrame *frame);
+
+/* ─────────────────────────────────────────────────────────────
+ * Radio connection — TCP
+ * ───────────────────────────────────────────────────────────── */
+
+static int connect_tcp(const char *host, uint16_t port) {
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) {
+        g_warning("client: socket() failed: %s", g_strerror(errno));
+        return -1;
+    }
+
+    struct sockaddr_in addr = {0};
+    addr.sin_family = AF_INET;
+    addr.sin_port   = htons(port);
+    if (inet_pton(AF_INET, host, &addr.sin_addr) != 1) {
+        g_warning("client: invalid host: %s", host);
+        close(fd);
+        return -1;
+    }
+
+    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        g_warning("client: connect %s:%u failed: %s",
+                  host, port, g_strerror(errno));
+        close(fd);
+        return -1;
+    }
+
+    g_info("client: connected to %s:%u", host, port);
+    return fd;
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * Radio connection — Serial
+ * ───────────────────────────────────────────────────────────── */
+
+#ifdef CLIENT_TRANSPORT_SERIAL
+static int connect_serial(const char *device, int baud) {
+    int fd = open(device, O_RDWR | O_NOCTTY | O_NONBLOCK);
+    if (fd < 0) {
+        g_warning("client: open %s failed: %s", device, g_strerror(errno));
+        return -1;
+    }
+
+    /* Set blocking */
+    int flags = fcntl(fd, F_GETFL, 0);
+    fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
+
+    struct termios tty = {0};
+    if (tcgetattr(fd, &tty) != 0) {
+        g_warning("client: tcgetattr failed: %s", g_strerror(errno));
+        close(fd);
+        return -1;
+    }
+
+    speed_t speed = (baud == 115200) ? B115200 : B9600;
+    cfsetispeed(&tty, speed);
+    cfsetospeed(&tty, speed);
+    cfmakeraw(&tty);
+    tty.c_cc[VMIN]  = 1;
+    tty.c_cc[VTIME] = 0;
+
+    if (tcsetattr(fd, TCSANOW, &tty) != 0) {
+        g_warning("client: tcsetattr failed: %s", g_strerror(errno));
+        close(fd);
+        return -1;
+    }
+
+    g_info("client: opened serial %s at %d baud", device, baud);
+    return fd;
+}
+#endif /* CLIENT_TRANSPORT_SERIAL */
+
+/* ─────────────────────────────────────────────────────────────
+ * want_config handshake
+ *
+ * Sends ToRadio{want_config_id=1} to kick off the startup dump.
+ * Without this the radio stays silent.
+ * ───────────────────────────────────────────────────────────── */
+
+static gboolean send_want_config(ClientTransport *ct) {
+    meshtastic_ToRadio to_radio = meshtastic_ToRadio_init_default;
+    to_radio.which_payload_variant = meshtastic_ToRadio_want_config_id_tag;
+    to_radio.payload_variant.want_config_id = 1;
+
+    uint8_t pb_buf[64];
+    pb_ostream_t stream = pb_ostream_from_buffer(pb_buf, sizeof(pb_buf));
+    if (!pb_encode(&stream, meshtastic_ToRadio_fields, &to_radio)) {
+        g_warning("client: want_config encode failed: %s",
+                  PB_GET_ERROR(&stream));
+        return FALSE;
+    }
+
+    uint8_t frame_buf[MESH_FRAME_MAX_TOTAL];
+    size_t frame_len = mesh_frame_encode(pb_buf,
+                                          (uint16_t)stream.bytes_written,
+                                          frame_buf, sizeof(frame_buf));
+    if (frame_len == 0) {
+        g_warning("client: want_config frame encoding failed");
+        return FALSE;
+    }
+
+    g_mutex_lock(&ct->write_mutex);
+    ssize_t written = write(ct->radio_fd, frame_buf, frame_len);
+    g_mutex_unlock(&ct->write_mutex);
+
+    if (written < 0 || (size_t)written != frame_len) {
+        g_warning("client: want_config write failed: %s", g_strerror(errno));
+        return FALSE;
+    }
+
+    g_info("client: sent want_config handshake (%zu bytes)", frame_len);
+    return TRUE;
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * MeshSendFn — called by MeshOutputStream for each chunk
+ *
+ * Mirrors send_chunk() in meshtastic.c:
+ *   - writes to radio_fd (TCP or serial)
+ *   - uses gateway_node_id as packet.to
+ *   - uses session_id as packet.id (gateway routes response back by this)
+ * ───────────────────────────────────────────────────────────── */
+
+int client_send_fn(const uint8_t *payload, size_t len,
+                   uint32_t seq, uint32_t total,
+                   gpointer user_data) {
+    ClientSendCtx *ctx = (ClientSendCtx *)user_data;
+
+    if (ctx->radio_fd < 0) {
+        g_warning("client: send_fn — radio not connected");
+        return 0;
+    }
+
+    /* Build chunk: seq(4LE) + total(4LE) + payload */
+    uint8_t chunk_buf[8 + CLIENT_FRAGMENT_SIZE];
+    if (len > CLIENT_FRAGMENT_SIZE) {
+        g_warning("client: chunk too large (%zu)", len);
+        return 0;
+    }
+    memcpy(chunk_buf,     &seq,    4);
+    memcpy(chunk_buf + 4, &total,  4);
+    memcpy(chunk_buf + 8, payload, len);
+    size_t chunk_total = 8 + len;
+
+    /* Data sub-message — payload is a pb_callback_t, use encode callback */
+    meshtastic_Data pb_data = meshtastic_Data_init_default;
+    pb_data.portnum = (meshtastic_PortNum)ctx->custom_port;
+
+    PbEncodeCtx payload_ctx = { chunk_buf, chunk_total };
+    pb_data.payload.funcs.encode = payload_encode_cb;
+    pb_data.payload.arg          = &payload_ctx;
+
+    /* MeshPacket — addressed TO the gateway */
+    meshtastic_MeshPacket packet = meshtastic_MeshPacket_init_default;
+    packet.which_payload_variant            = meshtastic_MeshPacket_decoded_tag;
+    packet.payload_variant.decoded          = pb_data;
+    packet.from                             = ctx->local_node_id;
+    packet.to                               = ctx->gateway_node_id;
+    packet.id                               = ctx->session_id;
+    packet.hop_limit                        = 3;
+
+    uint8_t packet_buf[600];
+    pb_ostream_t pstream = pb_ostream_from_buffer(packet_buf, sizeof(packet_buf));
+    if (!pb_encode(&pstream, meshtastic_MeshPacket_fields, &packet)) {
+        g_warning("client: MeshPacket encode failed: %s", PB_GET_ERROR(&pstream));
+        return 0;
+    }
+
+    /* ToRadio wrapper */
+    meshtastic_ToRadio to_radio = meshtastic_ToRadio_init_default;
+    to_radio.which_payload_variant        = meshtastic_ToRadio_packet_tag;
+    to_radio.payload_variant.packet       = packet;
+
+    uint8_t to_buf[700];
+    pb_ostream_t tostream = pb_ostream_from_buffer(to_buf, sizeof(to_buf));
+    if (!pb_encode(&tostream, meshtastic_ToRadio_fields, &to_radio)) {
+        g_warning("client: ToRadio encode failed: %s", PB_GET_ERROR(&tostream));
+        return 0;
+    }
+
+    /* Serial framing */
+    uint8_t frame_buf[MESH_FRAME_MAX_TOTAL];
+    size_t frame_len = mesh_frame_encode(to_buf,
+                                          (uint16_t)tostream.bytes_written,
+                                          frame_buf, sizeof(frame_buf));
+    if (frame_len == 0) {
+        g_warning("client: frame encoding failed");
+        return 0;
+    }
+
+    /* Write — mutex protects concurrent proxy worker threads */
+    g_mutex_lock(ctx->write_mutex);
+    ssize_t written = write(ctx->radio_fd, frame_buf, frame_len);
+    g_mutex_unlock(ctx->write_mutex);
+
+    if (written < 0 || (size_t)written != frame_len) {
+        g_warning("client: radio write failed: %s", g_strerror(errno));
+        return 0;
+    }
+
+    g_debug("client: sent chunk %u/%u session=%08x (%zu bytes)",
+            seq + 1, total, ctx->session_id, len);
+    return 1;
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * Incoming frame handler
+ *
+ * Called by the reader thread for each decoded FromRadio frame.
+ * We act on portnum==custom_port packets from the gateway.
+ * Sessions are keyed by (gateway_node_id, packet.id) — the gateway
+ * echoes the client's original session_id as packet.id in responses.
+ * ───────────────────────────────────────────────────────────── */
+
+static void handle_incoming_frame(ClientTransport *ct,
+                                   const MeshFrame *frame) {
+    /* Pre-allocate a decode buffer for Data.payload before decoding.
+     * We set the callback on the nested field path so nanopb calls it
+     * when it decodes the packet's Data.payload bytes field.          */
+    uint8_t    payload_buf[512];
+    PbDecodeCtx decode_ctx = { payload_buf, 0, sizeof(payload_buf) };
+
+    meshtastic_FromRadio from_radio = meshtastic_FromRadio_init_default;
+
+    /* Pre-set the decode callback on the packet's decoded.payload field.
+     * nanopb will call it if and when it decodes a packet variant with a
+     * decoded (not encrypted) payload.                                  */
+    from_radio.payload_variant.packet
+              .payload_variant.decoded
+              .payload.funcs.decode = payload_decode_cb;
+    from_radio.payload_variant.packet
+              .payload_variant.decoded
+              .payload.arg          = &decode_ctx;
+
+    pb_istream_t istream = pb_istream_from_buffer(frame->payload, frame->len);
+    if (!pb_decode(&istream, meshtastic_FromRadio_fields, &from_radio)) {
+        g_warning("client: FromRadio decode failed: %s", PB_GET_ERROR(&istream));
+        return;
+    }
+
+    switch (from_radio.which_payload_variant) {
+
+        case meshtastic_FromRadio_my_info_tag:
+            if (ct->local_node_id == 0) {
+                ct->local_node_id =
+                    from_radio.payload_variant.my_info.my_node_num;
+                g_info("client: local node ID detected: %08x",
+                       ct->local_node_id);
+            }
+            break;
+
+        case meshtastic_FromRadio_config_complete_id_tag:
+            g_info("client: mesh state sync complete (id=%u)",
+                   from_radio.payload_variant.config_complete_id);
+            break;
+
+        case meshtastic_FromRadio_packet_tag: {
+            meshtastic_MeshPacket *pkt = &from_radio.payload_variant.packet;
+
+            if (pkt->which_payload_variant != meshtastic_MeshPacket_decoded_tag)
+                break; /* encrypted — can't handle */
+
+            int portnum = (int)pkt->payload_variant.decoded.portnum;
+            if (portnum != (int)ct->custom_port)
+                break;
+
+            if (pkt->from != ct->gateway_node_id) {
+                g_debug("client: portnum=%d from unknown node %08x (expected %08x)",
+                        portnum, pkt->from, ct->gateway_node_id);
+                break;
+            }
+
+            /* decode_ctx.buf now holds the raw chunk bytes (set by callback) */
+            const uint8_t *raw     = payload_buf;
+            size_t         raw_len = decode_ctx.len;
+
+            if (raw_len < 8) {
+                g_warning("client: response chunk too short (%zu bytes)", raw_len);
+                break;
+            }
+
+            uint32_t seq_num      = 0;
+            uint32_t total_chunks = 0;
+            memcpy(&seq_num,      raw,     4);
+            memcpy(&total_chunks, raw + 4, 4);
+
+            const uint8_t *chunk_data = raw + 8;
+            size_t         chunk_len  = raw_len - 8;
+
+            /* Session keyed by (gateway_node_id, packet.id) */
+            uint32_t session_id = pkt->id;
+
+            MeshSession *session = mesh_session_get_or_create(
+                ct->sessions, ct->gateway_node_id, session_id);
+
+            if (seq_num == 0 || session->expected_chunks == 0)
+                mesh_session_init_reassembly(session, total_chunks);
+
+            bool complete = mesh_session_record_chunk(
+                session, seq_num, chunk_data, chunk_len);
+
+            ct->frames_recv++;
+            g_debug("client: response chunk %u/%u session=%08x",
+                    seq_num + 1, total_chunks, session_id);
+
+            if (!complete)
+                break;
+
+            /* All chunks in — push to the MeshStream pipe */
+            if (session->user_data) {
+                MeshStream *ms = (MeshStream *)session->user_data;
+                mesh_stream_push_data(ms,
+                                      session->assembly_buf->data,
+                                      session->assembly_buf->len);
+                g_info("client: response complete — pushed %u bytes session=%08x",
+                       session->assembly_buf->len, session_id);
+            } else {
+                g_warning("client: session %08x complete but no MeshStream "
+                          "assigned", session_id);
+            }
+
+            mesh_session_init_reassembly(session, 0);
+            break;
+        }
+
+        /* Suppress startup noise */
+        case meshtastic_FromRadio_config_tag:
+        case meshtastic_FromRadio_moduleConfig_tag:
+        case meshtastic_FromRadio_channel_tag:
+        case meshtastic_FromRadio_node_info_tag:
+        case meshtastic_FromRadio_rebooted_tag:
+        case meshtastic_FromRadio_queueStatus_tag:
+        case meshtastic_FromRadio_metadata_tag:
+        case meshtastic_FromRadio_fileInfo_tag:
+        case meshtastic_FromRadio_deviceuiConfig_tag:
+        case meshtastic_FromRadio_log_record_tag:
+            break;
+
+        default:
+            g_debug("client: unhandled FromRadio variant %d",
+                    from_radio.which_payload_variant);
+            break;
+    }
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * Reader thread
+ * ───────────────────────────────────────────────────────────── */
+
+static gpointer client_reader_thread(gpointer user_data) {
+    ClientTransport *ct = (ClientTransport *)user_data;
+    MeshFrameReader  reader;
+    mesh_frame_reader_init(&reader);
+
+    g_info("client: reader thread started (fd=%d)", ct->radio_fd);
+
+    uint8_t buf[512];
+    while (ct->running) {
+        ssize_t n = read(ct->radio_fd, buf, sizeof(buf));
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            g_warning("client: radio read error: %s", g_strerror(errno));
+            break;
+        }
+        if (n == 0) {
+            g_info("client: radio connection closed");
+            break;
+        }
+
+        /* Feed bytes one at a time — mesh_frame_reader_push expects
+         * (reader, const uint8_t *data, size_t len, MeshFrame *out) */
+        for (ssize_t i = 0; i < n; i++) {
+            if (mesh_frame_reader_push(&reader, buf + i, 1)) {
+                MeshFrame frame;
+                if (mesh_frame_get(&reader, &frame)) {
+                    handle_incoming_frame(ct, &frame);
+                }
+            }
+        }
+    }
+
+    g_info("client: reader thread exiting");
+    return NULL;
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * Public API
+ * ───────────────────────────────────────────────────────────── */
+
+ClientTransport *client_transport_new(uint32_t gateway_node_id,
+                                       uint32_t custom_port) {
+    ClientTransport *ct = g_new0(ClientTransport, 1);
+    ct->radio_fd         = -1;
+    ct->gateway_node_id  = gateway_node_id;
+    ct->custom_port      = custom_port > 0 ? custom_port : 100;
+    ct->next_session_id  = (uint32_t)(g_get_monotonic_time() & 0xFFFFFFFF);
+    ct->sessions         = mesh_session_table_new(CLIENT_SESSION_TIMEOUT_MS);
+    g_mutex_init(&ct->write_mutex);
+    g_mutex_init(&ct->session_id_mutex);
+    return ct;
+}
+
+gboolean client_transport_connect(ClientTransport *ct,
+                                   const char *host_or_device) {
+#ifdef CLIENT_TRANSPORT_SERIAL
+    ct->radio_fd = connect_serial(host_or_device, 115200);
+#else
+    (void)host_or_device;
+    ct->radio_fd = connect_tcp(CLIENT_MESHTASTIC_TCP_HOST,
+                                CLIENT_MESHTASTIC_TCP_PORT);
+#endif
+
+    if (ct->radio_fd < 0)
+        return FALSE;
+
+    if (!send_want_config(ct)) {
+        close(ct->radio_fd);
+        ct->radio_fd = -1;
+        return FALSE;
+    }
+
+    ct->running       = TRUE;
+    ct->reader_thread = g_thread_new("client-reader",
+                                      client_reader_thread, ct);
+
+    g_info("client: transport ready — gateway=%08x port=%u",
+           ct->gateway_node_id, ct->custom_port);
+    return TRUE;
+}
+
+ClientSendCtx *client_transport_new_session(ClientTransport *ct,
+                                             MeshSession    **out_session) {
+    g_mutex_lock(&ct->session_id_mutex);
+    uint32_t sid = ct->next_session_id++;
+    g_mutex_unlock(&ct->session_id_mutex);
+
+    /* Get/create the session — user_data will be set by caller after
+     * the MeshStream is created (chicken-and-egg otherwise)          */
+    MeshSession *session = mesh_session_get_or_create(
+        ct->sessions, ct->gateway_node_id, sid);
+
+    if (out_session)
+        *out_session = session;
+
+    ClientSendCtx *ctx   = g_new0(ClientSendCtx, 1);
+    ctx->radio_fd         = ct->radio_fd;
+    ctx->local_node_id    = ct->local_node_id;
+    ctx->gateway_node_id  = ct->gateway_node_id;
+    ctx->session_id       = sid;
+    ctx->custom_port      = ct->custom_port;
+    ctx->write_mutex      = &ct->write_mutex;
+
+    g_debug("client: new session %08x → gateway %08x", sid, ct->gateway_node_id);
+    return ctx;
+}
+
+void client_transport_free(ClientTransport *ct) {
+    if (!ct) return;
+
+    ct->running = FALSE;
+
+    if (ct->radio_fd >= 0) {
+        shutdown(ct->radio_fd, SHUT_RDWR);
+        close(ct->radio_fd);
+        ct->radio_fd = -1;
+    }
+
+    if (ct->reader_thread) {
+        g_thread_join(ct->reader_thread);
+        ct->reader_thread = NULL;
+    }
+
+    mesh_session_table_free(ct->sessions);
+    g_mutex_clear(&ct->write_mutex);
+    g_mutex_clear(&ct->session_id_mutex);
+    g_free(ct);
+}
