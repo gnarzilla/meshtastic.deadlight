@@ -9,6 +9,9 @@
 #include "core/logging.h"  
 #include "plugins/ratelimiter.h" 
 #include "core/logging.h"
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 
 typedef struct {
     gchar *domain;
@@ -1907,6 +1910,17 @@ static DeadlightHandlerResult api_handle_stream_endpoint(DeadlightConnection *co
     // Send SSE headers
     GOutputStream *client_os = g_io_stream_get_output_stream(
         G_IO_STREAM(conn->client_connection));
+
+    GSocket *sock = g_socket_connection_get_socket(conn->client_connection);
+    if (sock) {
+        g_socket_set_keepalive(sock, TRUE);
+        // TCP keepalive: start after 60s idle, probe every 10s, drop after 3 failures
+        int fd = g_socket_get_fd(sock);
+        int val;
+        val = 60; setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE,  &val, sizeof(val));
+        val = 10; setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &val, sizeof(val));
+        val = 3;  setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT,   &val, sizeof(val));
+    }
     
     const gchar *sse_headers = 
         "HTTP/1.1 200 OK\r\n"
@@ -1974,6 +1988,16 @@ static gboolean sse_send_update(gpointer user_data) {
     if (state->closed) {
         g_debug("SSE: Stream %lu already closed, stopping timer", state->conn->id);
         return G_SOURCE_REMOVE;
+    }
+
+    GSocket *sock = g_socket_connection_get_socket(state->socket_conn);
+    if (sock) {
+        GIOCondition cond = g_socket_condition_check(sock, G_IO_IN | G_IO_HUP | G_IO_ERR);
+        if (cond & (G_IO_HUP | G_IO_ERR)) {
+            g_debug("SSE: Client %lu hung up, cleaning up", state->conn->id);
+            sse_stream_cleanup(state);
+            return G_SOURCE_REMOVE;
+        }
     }
 
     DeadlightContext *ctx = state->conn->context;
