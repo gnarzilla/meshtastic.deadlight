@@ -1,4 +1,4 @@
-<img width="1791" height="821" alt="image" src="https://github.com/user-attachments/assets/5e102b6b-1661-4cfe-a0d5-b3de67211ef6" /><img width="1791" height="821" alt="image" src="https://github.com/user-attachments/assets/5e102b6b-1661-4cfe-a0d5-b3de67211ef6" /># deadmesh
+# deadmesh
 
 **Internet-over-LoRa: Update your blog from a can on a string from the smoldering rubble.**
 
