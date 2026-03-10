@@ -2,7 +2,7 @@
 
 **Goal:** Give every user a clear, predictable, and delightful experience even when the LoRa mesh is slow, lossy, or duty-cycle limited.
 
-## The `mesh://` URL scheme (the single best UX decision)
+## The `mesh://` URL scheme
 
 Prefix any URL with `mesh://` to instantly switch into **mesh-optimized mode**.
 
