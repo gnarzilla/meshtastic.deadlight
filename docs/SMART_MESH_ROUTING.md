@@ -106,7 +106,6 @@ warm_on_boot = true
 [denied]
 ; Friendly messages instead of errors
 show_alternatives = true
-humor_level = medium     ; subtle | medium | chaotic
 ```
 
 ## Next steps for you
