@@ -2,6 +2,7 @@
 venv/
 __pycache__/
 *.pyc
+get-pip.py
 
 # Generated protobuf files
 src/plugins/protobufs/*
