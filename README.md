@@ -6,7 +6,7 @@ Part of the [Deadlight ecosystem](https://github.com/gnarzilla#deadlight-ecosyst
 
 <img src="https://meshtastic.deadlight.boo/apple-touch-icon.png" width="32" height="32"> · [Project Blog](https://meshtastic.deadlight.boo) · [Why This Exists](#why-this-exists) · [Getting Started](#getting-started) · [Hardware](#hardware) · [Dashboard](#dashboard) · [Usage](#usage) · [Configuration](#configuration) · [How It Works](#how-it-works) · [Real-World Use Cases](#real-world-use-cases) · [Performance](#performance) · [Roadmap](#roadmap) · [License](#license)
 
-![Live long run](src/assets/long_run.gif)
+![Live long run](https://raw.githubusercontent.com/gnarzilla/deadmesh/main/src/assets/long_run.gif)
 
 ## Overview
 
@@ -35,7 +35,7 @@ deadmesh sits in the middle:
 
 **Result**: Your mesh network works with everything: email clients, web browsers, update tools, API services, without modifying a single line of application code.
 
-![Live Meshtastic Gateway](src/assets/deadmesh-live.gif)
+![Live Meshtastic Gateway](https://raw.githubusercontent.com/gnarzilla/deadmesh/main/src/assets/deadmesh-live.gif)
 
 ### Critical Scenarios This Enables
 
@@ -60,7 +60,8 @@ deadmesh sits in the middle:
 - **Embedded Dashboard**: Real-time gateway monitor with SSE streaming, self-contained in the binary, no external assets
 - **Live Node Table**: Persistent mesh node database; names, hops, SNR, battery, position, last heard, updated from every packet type
 
-![Live Meshtastic LONGFAST logging](src/assets/longfast-live-log.gif)
+![Live Meshtastic LONGFAST logging](https://raw.githubusercontent.com/gnarzilla/deadmesh/main/src/assets/longfast-live-log.gif)
+
 
 ## Getting Started
 
