@@ -853,9 +853,14 @@
             const res = await fetch(UI_BASE + '/api/messages');
             if (!res.ok) return;
             const data = await res.json();
-            // Full replace on fallback poll
-            messageList.length = 0;
-            (data.messages || []).forEach(m => messageList.push(m));
+            // Merge — don't wipe messages already received via SSE
+            (data.messages || []).forEach(m => {
+                const exists = messageList.some(e => e.from === m.from && e.ts === m.ts);
+                if (!exists) messageList.push(m);
+            });
+            // Keep sorted chronologically, capped at ring buffer size
+            messageList.sort((a, b) => a.ts - b.ts);
+            if (messageList.length > 50) messageList.splice(0, messageList.length - 50);
             renderMessages(messageList, messageList.length);
         } catch (e) { /* silent */ }
     }
@@ -988,10 +993,14 @@
         eventSource.addEventListener('message', (event) => {
             try {
                 const msg = JSON.parse(event.data);
-                messageList.push(msg);
-                // Keep at most 50 (matches server ring buffer size)
-                if (messageList.length > 50) messageList.shift();
-                renderMessages(messageList, messageList.length);
+                // Deduplicate — SSE may replay messages already loaded by pollMessages()
+                const exists = messageList.some(m => m.from === msg.from && m.ts === msg.ts);
+                if (!exists) {
+                    messageList.push(msg);
+                    // Keep at most 50 (matches server ring buffer size)
+                    if (messageList.length > 50) messageList.shift();
+                    renderMessages(messageList, messageList.length);
+                }
             } catch (err) {
                 console.error('[SSE] message parse error:', err);
             }
