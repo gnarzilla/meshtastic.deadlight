@@ -4,7 +4,7 @@
 
 Part of the [Deadlight ecosystem](https://github.com/gnarzilla#deadlight-ecosystem) secure, performant, privacy-focused tools for resilient connectivity on mesh/satellite/spotty networks.
 
-<img src="https://meshtastic.deadlight.boo/apple-touch-icon.png" width="32" height="32"> · [Project Blog](https://meshtastic.deadlight.boo) · [Why This Exists](#why-this-exists) · [Getting Started](#getting-started) · [Hardware](#hardware) · [Dashboard](#dashboard) · [Usage](#usage) · [Configuration](#configuration) · [How It Works](#how-it-works) · [Real-World Use Cases](#real-world-use-cases) · [Performance](#performance) · [Roadmap](#roadmap) · [License](#license)
+<img src="https://deadmesh.deadlight.boo/apple-touch-icon.png" width="32" height="32"> · [Project Blog](https://deadmesh.boo) · [Why This Exists](#why-this-exists) · [Getting Started](#getting-started) · [Hardware](#hardware) · [Dashboard](#dashboard) · [Usage](#usage) · [Configuration](#configuration) · [How It Works](#how-it-works) · [Real-World Use Cases](#real-world-use-cases) · [Performance](#performance) · [Roadmap](#roadmap) · [License](#license)
 
 ![Live long run](https://raw.githubusercontent.com/gnarzilla/deadmesh/main/src/assets/long_run.gif)
 
@@ -763,9 +763,9 @@ See [CONTRIBUTING.md](docs/CONTRIBUTING.md) for guidelines.
 
 ## Support & Community
 
-- **Issues**: [GitHub Issues](https://github.com/gnarzilla/meshtastic.deadlight/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/gnarzilla/meshtastic.deadlight/discussions)
-- **Blog**: [meshtastic.deadlight.boo](https://meshtastic.deadlight.boo)
+- **Issues**: [GitHub Issues](https://github.com/gnarzilla/deadmesh/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/gnarzilla/deadmesh/discussions)
+- **Blog**: [deadmesh.boo](https://deadmesh.boo)
 - **Support development**: [ko-fi/gnarzilla](https://ko-fi.com/gnarzilla)
 
 ## Deadlight Ecosystem
