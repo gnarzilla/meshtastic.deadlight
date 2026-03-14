@@ -92,6 +92,7 @@ static int  baud_constant(int baud_rate);
 static void handle_incoming_frame(MeshtasticPlugin *mp,
                                    DeadlightContext *context,
                                    const MeshFrame *frame);
+static gchar *json_escape_string(const gchar *s);
 
 /* ─────────────────────────────────────────────────────────────
  * Node table helpers
@@ -147,8 +148,8 @@ static void node_sse_push(DeadlightContext *context, uint32_t node_id)
                                           GUINT_TO_POINTER(node_id));
     if (!node) { g_mutex_unlock(&context->node_table_mutex); return; }
 
-    gchar *short_esc = g_strescape(node->short_name, NULL);
-    gchar *long_esc  = g_strescape(node->long_name,  NULL);
+    gchar *short_esc = json_escape_string(node->short_name);
+    gchar *long_esc  = json_escape_string(node->long_name);
     gchar *json = g_strdup_printf(
         "{\"id\":\"%08x\",\"short\":\"%s\",\"long\":\"%s\","
         "\"hops\":%d,\"snr\":%.1f,\"last_heard\":%" G_GINT64_FORMAT ","
@@ -231,6 +232,26 @@ static bool string_decode_cb(pb_istream_t *stream,
         if (!pb_read(stream, discard, n)) return false;
     }
     return true;
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * JSON string escaping
+ * g_strescape() mangles UTF-8 multibyte sequences to octal escapes
+ * which JSON.parse() rejects. This escapes only what JSON requires:
+ *   "  →  \"    \  →  \\    U+0000–U+001F  →  \uXXXX
+ * All other bytes including UTF-8 emoji pass through unchanged.
+ * ───────────────────────────────────────────────────────────── */
+static gchar *json_escape_string(const gchar *s)
+{
+    if (!s) return g_strdup("");
+    GString *out = g_string_sized_new(strlen(s) + 16);
+    for (const unsigned char *p = (const unsigned char *)s; *p; p++) {
+        if      (*p == '"')  g_string_append(out, "\\\"");
+        else if (*p == '\\') g_string_append(out, "\\\\");
+        else if (*p < 0x20)  g_string_append_printf(out, "\\u%04x", (unsigned)*p);
+        else                 g_string_append_c(out, (gchar)*p);
+    }
+    return g_string_free(out, FALSE);
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -652,7 +673,7 @@ static void handle_incoming_frame(MeshtasticPlugin *mp,
 
                         /* SSE push — notify dashboard clients immediately */
                         {
-                            gchar *text_esc = g_strescape(text, NULL);
+                            gchar *text_esc = json_escape_string(text);
                             gchar *json = g_strdup_printf(
                                 "{\"from\":\"%08x\",\"text\":\"%s\","
                                 "\"ts\":%" G_GINT64_FORMAT ",\"hops\":%u,\"snr\":%.1f}",
