@@ -83,7 +83,7 @@ Every deadmesh gateway slowly turns the entire mesh into a **living library**.
 
 Volunteers can load a USB stick with curated content, walk the trail/mesh, and “seed” every gateway they pass.
 
-We call them **mesh librarians** — the most wholesome job in off-grid networking.
+The **dead librarians** the most wholesome job in off-grid networking.
 
 ## Configuration – clean & annotated
 
