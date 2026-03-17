@@ -232,8 +232,10 @@ $(CLIENT_TARGET): \
 		$(NANOPB_SOURCES) \
 		$(MESHTASTIC_PB_C) \
 		| $(BINDIR)
-	@echo "Building deadmesh-client..."
-	@$(CC) $(ALL_CFLAGS) $(NANOPB_CFLAGS) -o $@ \
+	@echo "Building deadmesh-client (with serial support)..."
+	@$(CC) $(ALL_CFLAGS) $(NANOPB_CFLAGS) \
+		-DCLIENT_TRANSPORT_SERIAL \
+		-o $@ \
 		tools/client_main.c \
 		tools/client_transport.c \
 		src/mesh/mesh_framing.c \
