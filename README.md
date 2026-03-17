@@ -14,13 +14,12 @@ Part of the [Deadlight ecosystem](https://github.com/gnarzilla#deadlight-ecosyst
 
 **What makes this different from other mesh solutions:**
 - Standard protocols work unchanged: browse websites, send email, use apps
-- Transparent to applications, no special client software needed
-- Automatic fragmentation and reassembly for mesh transport
-- Full MITM proxy capabilities for traffic inspection and caching
-- Works with existing Meshtastic hardware and networks
-- Truly off-grid: solar-powered nodes can provide connectivity across kilometers
-- Real-time gateway dashboard with SSE streaming, embedded in the binary
-- Live mesh visibility: see every node, position, telemetry, and text message on your network
+- Transparent fragmentation & reassembly over Meshtastic LoRa packets
+- Full MITM proxy with caching, compression, ad-blocking, rate-limiting
+- Works with off-the-shelf Meshtastic hardware
+- Truly off-grid: solar-powered nodes can relay traffic across kilometers
+- Real-time embedded dashboard with live mesh visibility (nodes, SNR, positions, telemetry, chat)
+- Connection pooling + TLS session reuse to minimize airtime
 
 Think of it as giving your Meshtastic network the capabilities of a satellite terminal, running on $30 hardware with zero monthly fees.
 
@@ -62,7 +61,7 @@ deadmesh sits in the middle:
 
 ![Live Meshtastic LONGFAST logging](https://raw.githubusercontent.com/gnarzilla/deadmesh/main/src/assets/longfast-live-log.gif)
 
-## Smart Mesh Routing – `mesh://` mode
+## Smart Mesh Routing – `mesh://` mode (Not yet implemented)
 
 The killer feature that makes deadmesh actually *pleasant* to use on LoRa.
 
@@ -228,6 +227,29 @@ Full details and philosophy → [SMART_MESH_ROUTING.md](docs/SMART_MESH_ROUTING.
    curl --socks5 localhost:8080 http://example.com
    ```
 
+### Client-side Proxy (send device/second radio)
+
+The `deadmesh-client` binary runs a tiny local HTTP proxy that tunnels traffic over the mesh to your gateway.
+
+> Build note: Serial mode requires a compile-time flag
+
+```bash
+# Add -DCLIENT_TRANSPORT_SERIAL to client target in Makefile (see earlier instructions)
+make clean client UI=1
+```
+
+Run on client device (replace with your gateway's node ID)
+```bash
+./bin/deadmesh-client --gateway 14e7cdaf --device /dev/ttyACM0 -v
+# or Bluetooth serial
+./bin/deadmesh-client --gateway 14e7cdaf --device /dev/rfcomm0 -v
+```
+
+Once running (listen on localhost:8888)
+```
+export http_proxy=http://localhost:8888
+curl http://example.com
+```
 
 ### WSL (Windows Subsystem for Linux)
 
@@ -400,19 +422,21 @@ curl -x http://localhost:8080 \
 ssh -o ProxyCommand="nc -X 5 -x localhost:8080 %h %p" user@remote-server
 ```
 
-### Testing with One Device
+### Testing with One Device (gateway dev only)
 
-You don't need a second radio to test the proxy and fragmentation logic. The mesh simulator generates synthetic mesh sessions:
+Use the mesh simulator to feed fake mesh packets to the gateway:
 
 ```bash
-# Run the gateway in one terminal
-./bin/deadmesh -c deadmesh.conf -v
+# Terminal 1 — gateway pointed at sim PTY
+./tools/mesh-sim   # note the /dev/pts/X name it prints
+# Then edit deadmesh.conf serial_port = /dev/pts/X and restart gateway
 
-# In another terminal, drive a simulated mesh client session
-./tools/mesh-sim --gateway localhost:8080 --target http://example.com
+# Terminal 2 — inside sim, type:
+http 01234567 http://example.com
+status
 ```
 
-This exercises the full reassembly and session routing path without any LoRa hardware. To test actual over-the-air proxy sessions you need a second Meshtastic device configured as a client.
+This helps develop/test the gateway receive & proxy path without real LoRa.
 
 ### Meshtastic CLI (optional, for testing)
 
