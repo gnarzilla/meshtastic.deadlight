@@ -32,6 +32,7 @@
 #include "core/deadlight.h"
 #include "mesh_framing.h"
 #include "mesh_session.h"
+#include "mesh_stream.h"
 
 /* nanopb */
 #include "pb.h"
@@ -93,6 +94,15 @@ static void handle_incoming_frame(MeshtasticPlugin *mp,
                                    DeadlightContext *context,
                                    const MeshFrame *frame);
 static gchar *json_escape_string(const gchar *s);
+
+/* Dummy send callback for receive-only MeshStream on gateway */
+static int dummy_mesh_send(const uint8_t *payload, size_t len,
+                           uint32_t seq, uint32_t total,
+                           gpointer user_data) {
+    (void)payload; (void)seq; (void)total; (void)user_data;  /* silence warnings */
+    g_debug("Dummy mesh send called on gateway receive stream (ignoring %zu bytes)", len);
+    return 0;  /* report success */
+}
 
 /* ─────────────────────────────────────────────────────────────
  * Node table helpers
@@ -167,6 +177,45 @@ static void node_sse_push(DeadlightContext *context, uint32_t node_id)
 
     deadlight_sse_enqueue(context, "node_update", json);
     g_free(json);
+}
+
+gboolean deadlight_mesh_send_response(DeadlightConnection *conn,
+                                       const guint8 *data, gsize len)
+{
+    g_return_val_if_fail(conn != NULL, FALSE);
+    g_return_val_if_fail(conn->context != NULL, FALSE);
+    g_return_val_if_fail(data != NULL && len > 0, FALSE);
+
+    MeshtasticPlugin *mp = g_hash_table_lookup(
+        conn->context->plugins_data, "meshtastic");
+    if (!mp || !mp->enabled || mp->serial_fd < 0) {
+        g_warning("Connection %lu (mesh): send_response — plugin unavailable", conn->id);
+        return FALSE;
+    }
+
+    /* Temporarily point conn->mesh_source_node at the destination —
+     * send_chunk reads conn for the session ID but destination node
+     * comes from the packet header we build, so we need to set
+     * packet.to in send_chunk. For now conn->mesh_source_node IS
+     * the destination (we're replying to whoever sent the request). */
+    uint32_t total_chunks = ((uint32_t)len + 219) / 220;
+    gboolean ok = TRUE;
+
+    for (uint32_t i = 0; i < total_chunks && ok; i++) {
+        size_t offset    = i * 220;
+        size_t chunk_len = MIN(220, len - offset);
+        ok = send_chunk(mp, conn, data + offset, chunk_len, i, total_chunks);
+        if (!ok) {
+            g_warning("Connection %lu (mesh): send_response chunk %u/%u failed",
+                      conn->id, i + 1, total_chunks);
+        }
+    }
+
+    if (ok) {
+        g_info("Connection %lu (mesh): sent %zu bytes in %u chunks to node %08x",
+               conn->id, len, total_chunks, conn->mesh_source_node);
+    }
+    return ok;
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -342,6 +391,33 @@ static int open_serial(const char *device, int baud_rate) {
     return fd;
 }
 
+static gboolean meshtastic_send_response_hook(DeadlightConnection *conn,
+                                               const guint8 *data, gsize len,
+                                               gpointer user_data)
+{
+    MeshtasticPlugin *mp = (MeshtasticPlugin *)user_data;
+    if (!mp || !mp->enabled || mp->serial_fd < 0) {
+        g_warning("Connection %lu (mesh): send hook — plugin unavailable", conn->id);
+        return FALSE;
+    }
+
+    uint32_t total_chunks = ((uint32_t)len + 219) / 220;
+    gboolean ok = TRUE;
+    for (uint32_t i = 0; i < total_chunks && ok; i++) {
+        size_t offset    = i * 220;
+        size_t chunk_len = MIN(220, len - offset);
+        ok = send_chunk(mp, conn, data + offset, chunk_len, i, total_chunks);
+        if (!ok)
+            g_warning("Connection %lu (mesh): send_response chunk %u/%u failed",
+                      conn->id, i + 1, total_chunks);
+    }
+
+    if (ok)
+        g_info("Connection %lu (mesh): sent %zu bytes → %u chunks to node %08x",
+               conn->id, len, total_chunks, conn->mesh_source_node);
+    return ok;
+}
+
 /* ─────────────────────────────────────────────────────────────
  * Plugin lifecycle
  * ───────────────────────────────────────────────────────────── */
@@ -408,6 +484,10 @@ static gboolean meshtastic_init(DeadlightContext *context) {
     if (context->mesh) {
         context->mesh->radio_fd = mp->serial_fd;
     }
+
+    /* Register the send hook so core can call back into us */
+    context->mesh_send_fn       = meshtastic_send_response_hook;
+    context->mesh_send_user_data = mp;
 
     g_info("Meshtastic: transport ready — device=%s port=%u",
            mp->serial_device, mp->custom_port);
@@ -899,13 +979,80 @@ static void handle_incoming_frame(MeshtasticPlugin *mp,
         mesh_session_init_reassembly(session, total_chunks);
     }
 
-    bool complete = mesh_session_record_chunk(
+    bool complete = FALSE;  // Declare here so visible in new block
+
+    complete = mesh_session_record_chunk(
         session, seq_num, chunk_data, chunk_len);
 
     g_debug("Meshtastic: chunk %u/%u from node %08x session %08x",
             seq_num + 1, total_chunks, src_node, session_id);
 
     if (!complete) return;
+    /* === Initiate proxy connection on first chunk of new session === */
+    if (seq_num == 0 && session->conn == NULL) {
+        g_info("Meshtastic: New proxy session from %08x session %08x — creating DeadlightConnection",
+            src_node, session_id);
+
+        /* Create connection object — no real socket (mesh origin) */
+        DeadlightConnection *new_conn = deadlight_connection_new(context, NULL, NULL);
+        if (!new_conn) {
+            g_warning("Failed to create DeadlightConnection for mesh session %08x", session_id);
+            return;
+        }
+
+        /* Tag for mesh origin */
+        new_conn->mesh_source_node = src_node;
+        new_conn->mesh_session_id  = session_id;
+
+        g_debug("Created DeadlightConnection %lu for mesh (client_connection=%p)",
+                new_conn->id, new_conn->client_connection);
+
+        /* Create receive-only MeshStream */
+        GIOStream *mesh_io = mesh_stream_new(session, dummy_mesh_send, NULL, 220);
+        if (!mesh_io) {
+            g_warning("Failed to create MeshStream for session %08x", session_id);
+            deadlight_connection_free(new_conn);
+            return;
+        }
+
+        /* Attach to session */
+        session->user_data = mesh_io;
+        session->conn = new_conn;
+
+        /* Queue to worker pool */
+        GError *push_err = NULL;
+        if (!g_thread_pool_push(context->worker_pool, new_conn, &push_err)) {
+            g_warning("Failed to queue mesh proxy conn %lu: %s",
+                    new_conn->id, push_err ? push_err->message : "unknown");
+            g_clear_error(&push_err);
+            deadlight_connection_free(new_conn);
+            g_object_unref(mesh_io);
+            session->user_data = NULL;
+            session->conn = NULL;
+            return;
+        }
+
+        g_info("Mesh proxy session %08x:%08x queued to worker pool (conn %lu)",
+            src_node, session_id, new_conn->id);
+
+        /* Push initial data if complete */
+        if (complete && session->assembly_buf->len > 0) {
+            GOutputStream *out = g_io_stream_get_output_stream(mesh_io);
+            GError *write_err = NULL;
+            gsize written = 0;
+            g_output_stream_write_all(out,
+                                    session->assembly_buf->data,
+                                    session->assembly_buf->len,
+                                    &written, NULL, &write_err);
+            if (write_err) {
+                g_warning("Failed to push initial %u bytes to mesh stream: %s",
+                        (guint)session->assembly_buf->len, write_err->message);
+                g_clear_error(&write_err);
+            } else {
+                g_debug("Pushed initial %zu bytes to new mesh proxy stream", written);
+            }
+        }
+    }
 
     if (!session->conn) {
         g_info("Meshtastic: session %08x:%08x complete (%u bytes) "
@@ -959,6 +1106,7 @@ static gboolean send_chunk(MeshtasticPlugin *mp,
     packet.which_payload_variant = meshtastic_MeshPacket_decoded_tag;
     packet.payload_variant.decoded = pb_data;
     packet.from                  = mp->local_node_id;
+    packet.to                    = conn->mesh_source_node; 
     packet.id                    = (uint32_t)conn->mesh_session_id;
     packet.hop_limit             = 3;
 

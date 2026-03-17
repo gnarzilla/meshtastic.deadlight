@@ -1,5 +1,5 @@
 /**
- * Deadlight Proxy v1.0 - Network Module (FIXED)
+ * Deadlight Proxy v1.0 - Network ModuleS
  *
  * Socket management, connection handling, and data transfer
  * 
@@ -44,6 +44,22 @@ static void _destroy_notify_connection (gpointer data)
 {
     DeadlightConnection *conn = (DeadlightConnection*)data;
     cleanup_connection_internal(conn, FALSE);
+}
+
+gboolean deadlight_mesh_send_response(DeadlightConnection *conn,
+                                       const guint8 *data, gsize len)
+{
+    g_return_val_if_fail(conn != NULL, FALSE);
+    g_return_val_if_fail(conn->context != NULL, FALSE);
+    g_return_val_if_fail(data != NULL && len > 0, FALSE);
+
+    if (!conn->context->mesh_send_fn) {
+        g_warning("Connection %lu (mesh): no send hook registered", conn->id);
+        return FALSE;
+    }
+
+    return conn->context->mesh_send_fn(conn, data, len,
+                                        conn->context->mesh_send_user_data);
 }
 
 void deadlight_network_cleanup(DeadlightContext *context) {
@@ -235,39 +251,34 @@ void deadlight_connection_free(DeadlightConnection *conn) {
  * Handle incoming connection
  */
 static gboolean on_incoming_connection(GSocketService *service,
-                                     GSocketConnection *connection,
-                                     GObject *source_object,
-                                     gpointer user_data) {
-    (void)service; 
-    (void)source_object; 
-    
+                                      GSocketConnection *connection,
+                                      GObject *source_object,
+                                      gpointer user_data) {
+    (void)service;
+    (void)source_object;
+
     DeadlightContext *context = (DeadlightContext *)user_data;
-    
-    // Check if we're shutting down
+
     if (context->shutdown_requested) {
         return FALSE;
     }
-    
-    // Check connection limit
+
     g_mutex_lock(&context->network->connection_mutex);
     guint active_count = g_hash_table_size(context->connections);
     g_mutex_unlock(&context->network->connection_mutex);
-    
+
     if (active_count >= context->max_connections) {
-        g_warning("Connection limit reached (%d), rejecting new connection", 
-                 context->max_connections);
+        g_warning("Connection limit reached (%d), rejecting new connection",
+                  context->max_connections);
         context->network->total_rejected++;
         return FALSE;
     }
-    
-    // Accept the connection
+
     g_object_ref(connection);
     context->network->total_accepted++;
-    
-    // Get client address
+
     GSocketAddress *remote_addr = g_socket_connection_get_remote_address(connection, NULL);
     gchar *client_str = NULL;
-    
     if (remote_addr) {
         if (G_IS_INET_SOCKET_ADDRESS(remote_addr)) {
             GInetSocketAddress *inet_addr = G_INET_SOCKET_ADDRESS(remote_addr);
@@ -279,11 +290,12 @@ static gboolean on_incoming_connection(GSocketService *service,
         }
         g_object_unref(remote_addr);
     }
-    
+
     g_info("New connection from %s", client_str ? client_str : "unknown");
-    
-    // Create connection object
-    DeadlightConnection *conn = deadlight_connection_new(context, connection, client_str); 
+
+    DeadlightConnection *conn = deadlight_connection_new(context, connection, client_str);
+
+    detect_protocol:  
 
     // Call plugin hook for new connection
     if (!deadlight_plugins_call_on_connection_accept(context, conn)) {
@@ -291,7 +303,7 @@ static gboolean on_incoming_connection(GSocketService *service,
         deadlight_connection_free(conn);
         return FALSE;
     }
-    
+
     // Add to connection table
     g_mutex_lock(&context->network->connection_mutex);
     guint64 *id_ptr = g_new(guint64, 1);
@@ -300,22 +312,21 @@ static gboolean on_incoming_connection(GSocketService *service,
     context->active_connections++;
     context->total_connections++;
     g_mutex_unlock(&context->network->connection_mutex);
-    
+
     // Queue for processing
     GError *error = NULL;
     if (!g_thread_pool_push(context->worker_pool, conn, &error)) {
         g_error("Failed to queue connection: %s", error->message);
         g_error_free(error);
-        
-        // Remove from table
+
         g_mutex_lock(&context->network->connection_mutex);
         g_hash_table_remove(context->connections, &conn->id);
         context->active_connections--;
         g_mutex_unlock(&context->network->connection_mutex);
-        
+
         return FALSE;
     }
-    
+
     return TRUE;
 }
 
@@ -336,7 +347,7 @@ DeadlightConnection *deadlight_connection_new(DeadlightContext *context,
     // Initialize connection
     conn->cleaned = FALSE;
     conn->context = context;
-    conn->client_connection = g_object_ref(client_connection);
+    conn->client_connection = client_connection ? g_object_ref(client_connection) : NULL;
     conn->state = DEADLIGHT_STATE_INIT;
     conn->client_address = client_address_str;
     conn->protocol = DEADLIGHT_PROTOCOL_UNKNOWN;
@@ -367,6 +378,73 @@ static void connection_thread_func(gpointer data, gpointer user_data) {
 
     g_debug("Worker thread processing connection %lu", conn->id);
 
+    /* ── Mesh-origin fast path ───────────────────────────────────────
+     * Mesh connections have no underlying socket — data arrives via
+     * the assembly buffer injected by the Meshtastic plugin.
+     * Skip all GSocket machinery and go straight to protocol detection.
+     * ────────────────────────────────────────────────────────────── */
+    if (conn->mesh_source_node != 0) {
+        conn->state = DEADLIGHT_STATE_DETECTING;
+
+        /* Wait for the plugin to inject data if the buffer is still empty.
+         * The plugin injects synchronously before queuing, so in practice
+         * this loop should not spin more than once or twice. */
+        gint waited_ms = 0;
+        while (conn->client_buffer->len == 0 && waited_ms < 5000) {
+            g_usleep(10 * 1000);  /* 10ms */
+            waited_ms += 10;
+        }
+
+        if (conn->client_buffer->len == 0) {
+            g_warning("Connection %lu (mesh): no data after 5s, dropping", conn->id);
+            goto cleanup;
+        }
+
+        const DeadlightProtocolHandler *handler = deadlight_protocol_detect_and_assign(
+            conn, conn->client_buffer->data, conn->client_buffer->len);
+
+        if (!handler) {
+            g_warning("Connection %lu (mesh): could not detect protocol", conn->id);
+            goto cleanup;
+        }
+
+        g_info("Connection %lu (mesh): detected protocol '%s'", conn->id, handler->name);
+        conn->state = DEADLIGHT_STATE_CONNECTING;
+
+        if (!deadlight_plugins_call_on_protocol_detect(context, conn)) {
+            g_info("Connection %lu (mesh): blocked by plugin after protocol detection", conn->id);
+            goto cleanup;
+        }
+
+        gchar *config_key = g_strdup_printf("%s_enabled", g_ascii_strdown(handler->name, -1));
+        gboolean enabled = deadlight_config_get_bool(context, "protocols", config_key, TRUE);
+        g_free(config_key);
+
+        if (!enabled) {
+            g_warning("Connection %lu (mesh): protocol '%s' disabled", conn->id, handler->name);
+            goto cleanup;
+        }
+
+        DeadlightHandlerResult result = handler->handle(conn, &error);
+        switch (result) {
+            case HANDLER_SUCCESS_CLEANUP_NOW:
+                g_info("Connection %lu (mesh): handler completed", conn->id);
+                cleanup_connection_internal(conn, TRUE);
+                return;
+            case HANDLER_SUCCESS_ASYNC:
+                g_debug("Connection %lu (mesh): async handler started", conn->id);
+                return;
+            case HANDLER_ERROR:
+            default:
+                g_warning("Connection %lu (mesh): handler failed: %s",
+                          conn->id, error ? error->message : "unknown");
+                g_clear_error(&error);
+                goto cleanup;
+        }
+    }
+
+    /* ── Normal socket path (unchanged below) ───────────────────── */
+    detect_protocol:
     conn->state = DEADLIGHT_STATE_DETECTING;
 
     GSocket *socket = g_socket_connection_get_socket(conn->client_connection);
@@ -374,7 +452,7 @@ static void connection_thread_func(gpointer data, gpointer user_data) {
     gssize bytes_peeked = 0;
     gint timeout = deadlight_config_get_int(context, "protocols", "protocol_detection_timeout", 5);
     
-    // FIX: Use blocking wait instead of busy-loop polling
+    // Use blocking wait instead of busy-loop polling
     // This allows the CPU to enter deep sleep states (C3/C6) on edge devices
     g_socket_set_blocking(socket, TRUE);
     g_socket_set_timeout(socket, timeout);
@@ -922,6 +1000,12 @@ static void cleanup_connection_internal(DeadlightConnection *conn, gboolean remo
         g_byte_array_free(conn->upstream_buffer, TRUE);
         conn->upstream_buffer = NULL;
     }
+
+    if (conn->mesh_source_node != 0) {
+        g_debug("Cleaning mesh-origin conn %lu (node %08x session %08x)",
+                conn->id, conn->mesh_source_node, conn->mesh_session_id);
+        // Optional: remove session if needed
+    }
     
     g_free(conn->client_address);
     conn->client_address = NULL;
@@ -1100,10 +1184,71 @@ void deadlight_network_tunnel_socket_connections(GSocketConnection *conn1, GSock
 
 gboolean deadlight_network_tunnel_data(DeadlightConnection *conn, GError **error) {
     g_return_val_if_fail(conn != NULL, FALSE);
-    g_return_val_if_fail(conn->client_connection != NULL, FALSE);
     g_return_val_if_fail(conn->upstream_connection != NULL, FALSE);
-    
-    (void)error; // Suppress unused parameter warning
+
+    (void)error;
+
+    /* ── Mesh-origin path ────────────────────────────────────────────────
+     * No client socket exists — drain the upstream response into a buffer
+     * then fragment and send back over LoRa to the originating node.
+     * ─────────────────────────────────────────────────────────────────── */
+    if (conn->mesh_source_node != 0) {
+        GInputStream *upstream_is;
+        if (conn->upstream_tls) {
+            upstream_is = g_io_stream_get_input_stream(G_IO_STREAM(conn->upstream_tls));
+        } else {
+            upstream_is = g_io_stream_get_input_stream(G_IO_STREAM(conn->upstream_connection));
+        }
+
+        GByteArray *response_buf = g_byte_array_new();
+        guint8 buf[16384];
+        GError *read_err = NULL;
+
+        while (TRUE) {
+            gssize n = g_input_stream_read(upstream_is, buf, sizeof(buf), NULL, &read_err);
+            if (n > 0) {
+                g_byte_array_append(response_buf, buf, (guint)n);
+            } else if (n == 0) {
+                break; /* EOF — upstream done */
+            } else {
+                if (read_err &&
+                    !g_error_matches(read_err, G_IO_ERROR, G_IO_ERROR_WOULD_BLOCK)) {
+                    g_warning("Connection %lu (mesh): upstream read error: %s",
+                              conn->id, read_err->message);
+                    g_clear_error(&read_err);
+                    break;
+                }
+                g_clear_error(&read_err);
+                g_usleep(1000);
+            }
+        }
+
+        g_info("Connection %lu (mesh): %u bytes from upstream → fragmenting for node %08x",
+               conn->id, response_buf->len, conn->mesh_source_node);
+
+        gboolean ok = FALSE;
+        if (response_buf->len > 0) {
+            ok = deadlight_mesh_send_response(conn,
+                                              response_buf->data,
+                                              response_buf->len);
+        } else {
+            g_warning("Connection %lu (mesh): upstream returned empty response", conn->id);
+        }
+
+        conn->bytes_upstream_to_client += response_buf->len;
+        g_byte_array_free(response_buf, TRUE);
+        conn->state = DEADLIGHT_STATE_CLOSING;
+
+        g_info("Connection %lu (mesh): tunnel closed (upstream->mesh: %s)",
+               conn->id,
+               deadlight_format_bytes(conn->bytes_upstream_to_client));
+        return ok;
+    }
+
+    /* ── Normal socket path ──────────────────────────────────────────────
+     * Original bidirectional tunnel — unchanged.
+     * ─────────────────────────────────────────────────────────────────── */
+    g_return_val_if_fail(conn->client_connection != NULL, FALSE);
 
     // Client streams
     GInputStream *client_is;
@@ -1131,44 +1276,42 @@ gboolean deadlight_network_tunnel_data(DeadlightConnection *conn, GError **error
         upstream_os = g_io_stream_get_output_stream(G_IO_STREAM(conn->upstream_connection));
     }
 
-    // FIX: Use GIO pollable streams instead of raw g_poll
     guint8 buffer[16384];
     gboolean running = TRUE;
 
     while (running) {
         gboolean activity = FALSE;
         GError *local_error = NULL;
-        
+
         // Client to upstream
-        if (G_IS_POLLABLE_INPUT_STREAM(client_is) && 
+        if (G_IS_POLLABLE_INPUT_STREAM(client_is) &&
             g_pollable_input_stream_can_poll(G_POLLABLE_INPUT_STREAM(client_is))) {
-            
+
             if (g_pollable_input_stream_is_readable(G_POLLABLE_INPUT_STREAM(client_is))) {
                 gssize bytes_read = g_pollable_input_stream_read_nonblocking(
                     G_POLLABLE_INPUT_STREAM(client_is), buffer, sizeof(buffer), NULL, &local_error);
                 if (bytes_read > 0) {
                     if (!g_output_stream_write_all(upstream_os, buffer, bytes_read, NULL, NULL, &local_error)) {
-                        g_warning("Connection %lu: Failed to write to upstream: %s", 
-                                 conn->id, local_error ? local_error->message : "unknown");
+                        g_warning("Connection %lu: Failed to write to upstream: %s",
+                                  conn->id, local_error ? local_error->message : "unknown");
                         running = FALSE;
                     } else {
                         conn->bytes_client_to_upstream += bytes_read;
                         activity = TRUE;
                     }
                 } else if (bytes_read == 0) {
-                    running = FALSE; // EOF
+                    running = FALSE;
                 } else if (local_error && !g_error_matches(local_error, G_IO_ERROR, G_IO_ERROR_WOULD_BLOCK)) {
-                    running = FALSE; // Real error
+                    running = FALSE;
                 }
                 g_clear_error(&local_error);
             }
         } else {
-            // Fallback for non-pollable streams
             gssize bytes_read = g_input_stream_read(client_is, buffer, sizeof(buffer), NULL, &local_error);
             if (bytes_read > 0) {
                 if (!g_output_stream_write_all(upstream_os, buffer, bytes_read, NULL, NULL, &local_error)) {
-                    g_warning("Connection %lu: Failed to write to upstream: %s", 
-                             conn->id, local_error ? local_error->message : "unknown");
+                    g_warning("Connection %lu: Failed to write to upstream: %s",
+                              conn->id, local_error ? local_error->message : "unknown");
                     running = FALSE;
                 } else {
                     conn->bytes_client_to_upstream += bytes_read;
@@ -1181,35 +1324,34 @@ gboolean deadlight_network_tunnel_data(DeadlightConnection *conn, GError **error
         }
 
         // Upstream to client
-        if (running && G_IS_POLLABLE_INPUT_STREAM(upstream_is) && 
+        if (running && G_IS_POLLABLE_INPUT_STREAM(upstream_is) &&
             g_pollable_input_stream_can_poll(G_POLLABLE_INPUT_STREAM(upstream_is))) {
-            
+
             if (g_pollable_input_stream_is_readable(G_POLLABLE_INPUT_STREAM(upstream_is))) {
                 gssize bytes_read = g_pollable_input_stream_read_nonblocking(
                     G_POLLABLE_INPUT_STREAM(upstream_is), buffer, sizeof(buffer), NULL, &local_error);
                 if (bytes_read > 0) {
                     if (!g_output_stream_write_all(client_os, buffer, bytes_read, NULL, NULL, &local_error)) {
-                        g_warning("Connection %lu: Failed to write to client: %s", 
-                                 conn->id, local_error ? local_error->message : "unknown");
+                        g_warning("Connection %lu: Failed to write to client: %s",
+                                  conn->id, local_error ? local_error->message : "unknown");
                         running = FALSE;
                     } else {
                         conn->bytes_upstream_to_client += bytes_read;
                         activity = TRUE;
                     }
                 } else if (bytes_read == 0) {
-                    running = FALSE; // EOF
+                    running = FALSE;
                 } else if (local_error && !g_error_matches(local_error, G_IO_ERROR, G_IO_ERROR_WOULD_BLOCK)) {
-                    running = FALSE; // Real error
+                    running = FALSE;
                 }
                 g_clear_error(&local_error);
             }
         } else {
-            // Fallback for non-pollable streams
             gssize bytes_read = g_input_stream_read(upstream_is, buffer, sizeof(buffer), NULL, &local_error);
             if (bytes_read > 0) {
                 if (!g_output_stream_write_all(client_os, buffer, bytes_read, NULL, NULL, &local_error)) {
-                    g_warning("Connection %lu: Failed to write to client: %s", 
-                             conn->id, local_error ? local_error->message : "unknown");
+                    g_warning("Connection %lu: Failed to write to client: %s",
+                              conn->id, local_error ? local_error->message : "unknown");
                     running = FALSE;
                 } else {
                     conn->bytes_upstream_to_client += bytes_read;
@@ -1220,8 +1362,7 @@ gboolean deadlight_network_tunnel_data(DeadlightConnection *conn, GError **error
             }
             g_clear_error(&local_error);
         }
-        
-        // Small sleep if no activity to avoid busy loop (1ms vs original 10ms)
+
         if (!activity) {
             g_usleep(1000);
         }

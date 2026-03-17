@@ -317,6 +317,14 @@ struct _DeadlightContext {
     gint         message_ring_head;
     gint         message_ring_count;
     GMutex       message_ring_mutex;
+    
+    /* Mesh send hook — registered by meshtastic plugin at init.
+    * Allows core to send response chunks back over LoRa without
+    * depending on meshtastic.so at link time.                   */
+    gboolean (*mesh_send_fn)(DeadlightConnection *conn,
+                            const guint8 *data, gsize len,
+                            gpointer user_data);
+    gpointer  mesh_send_user_data;
 
     /* Pending SSE events — meshtastic appends formatted SSE frames here;
      * api.c's SSE timer flushes them on its next tick (same thread,
@@ -541,6 +549,18 @@ gssize   deadlight_mesh_recv(DeadlightMeshManager *mesh, guint32 *out_src_node, 
 void     deadlight_mesh_get_stats(DeadlightMeshManager *mesh,
                                    guint64 *packets_sent, guint64 *packets_received,
                                    guint64 *packets_lost,  guint64 *sessions_active);
+
+/* Response routing — send data back to whoever originated a connection.
+ * For mesh-origin connections (mesh_source_node != 0), fragments and sends
+ * over LoRa via the meshtastic plugin's send_chunk path.
+ * For normal socket connections, writes to client_connection or client_tls.
+ * Use this everywhere a response goes to the client instead of writing to
+ * client_connection directly — it's the safe call for both origins.        */
+gboolean deadlight_mesh_send_response(DeadlightConnection *conn,
+                                       const guint8 *data, gsize len);
+gboolean deadlight_send_client_response(DeadlightConnection *conn,
+                                         const gchar *data, gsize len,
+                                         GError **error);
 
 /* ═══════════════════════════════════════════════════════════
  * API prototypes — Connection pool

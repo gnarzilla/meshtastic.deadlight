@@ -251,6 +251,9 @@ int client_send_fn(const uint8_t *payload, size_t len,
     meshtastic_Data pb_data = meshtastic_Data_init_default;
     pb_data.portnum = (meshtastic_PortNum)ctx->custom_port;
 
+    g_message("Client sending on portnum=%d session=%08x chunk %u/%u (%zu bytes payload)",
+          ctx->custom_port, ctx->session_id, seq, total, len);
+
     PbEncodeCtx payload_ctx = { chunk_buf, chunk_total };
     pb_data.payload.funcs.encode = payload_encode_cb;
     pb_data.payload.arg          = &payload_ctx;
@@ -361,6 +364,11 @@ static void handle_incoming_frame(ClientTransport *ct,
 
         case meshtastic_FromRadio_packet_tag: {
             meshtastic_MeshPacket *pkt = &from_radio.payload_variant.packet;
+            
+            g_debug("client: incoming packet from=%08x to=%08x id=%08x portnum=%d decoded=%d",
+                    pkt->from, pkt->to, pkt->id,
+                    (int)pkt->payload_variant.decoded.portnum,
+                    pkt->which_payload_variant == meshtastic_MeshPacket_decoded_tag);
 
             if (pkt->which_payload_variant != meshtastic_MeshPacket_decoded_tag)
                 break; /* encrypted — can't handle */
