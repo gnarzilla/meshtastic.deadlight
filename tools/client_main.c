@@ -417,7 +417,7 @@ int main(int argc, char *argv[]) {
 
     /* Wait up to 3s for MyNodeInfo so local_node_id is set */
     g_info("client: waiting for mesh state sync...");
-    for (int i = 0; i < 30 && g_transport->local_node_id == 0; i++)
+    for (int i = 0; i < 100 && g_transport->local_node_id == 0; i++)
         g_usleep(100 * 1000);
 
     if (g_transport->local_node_id != 0)

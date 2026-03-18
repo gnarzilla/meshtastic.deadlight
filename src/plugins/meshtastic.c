@@ -1113,7 +1113,8 @@ static gboolean send_chunk(MeshtasticPlugin *mp,
     packet.which_payload_variant = meshtastic_MeshPacket_decoded_tag;
     packet.payload_variant.decoded = pb_data;
     packet.from                  = mp->local_node_id;
-    packet.to                    = conn->mesh_source_node; 
+    packet.to                    = conn->mesh_source_node;
+    packet.channel               = 0;
     packet.id                    = (uint32_t)conn->mesh_session_id;
     packet.hop_limit             = 3;
 
@@ -1152,6 +1153,10 @@ static gboolean send_chunk(MeshtasticPlugin *mp,
     g_mutex_lock(&mp->write_mutex);
     ssize_t written = write(mp->serial_fd, frame_buf, frame_len);
     g_mutex_unlock(&mp->write_mutex);
+
+    /* Pace transmissions — radio TX queue is small (firmware-dependent).
+    * ~500ms per packet is conservative but safe for MediumFast airtime. */
+    g_usleep(500 * 1000);  /* 500ms */
 
     if (written < 0 || (size_t)written != frame_len) {
         g_warning("Meshtastic: serial write failed: %s", g_strerror(errno));
