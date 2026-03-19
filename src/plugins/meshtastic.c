@@ -1002,7 +1002,6 @@ static void handle_incoming_frame(MeshtasticPlugin *mp,
     g_debug("Meshtastic: chunk %u/%u from node %08x session %08x",
             seq_num + 1, total_chunks, src_node, logical_session_id);
 
-    if (!complete) return;
     /* === Initiate proxy connection on first chunk of new session === */
     if (seq_num == 0 && session->conn == NULL) {
         g_info("Meshtastic: New proxy session from %08x session %08x — creating DeadlightConnection",
@@ -1068,6 +1067,8 @@ static void handle_incoming_frame(MeshtasticPlugin *mp,
             }
         }
     }
+
+    if (!complete) return;
 
     if (!session->conn) {
         g_info("Meshtastic: session %08x:%08x complete (%u bytes) "
@@ -1159,6 +1160,9 @@ static gboolean send_chunk(MeshtasticPlugin *mp,
         g_warning("Meshtastic: frame encoding failed (payload too large?)");
         return FALSE;
     }
+
+    g_debug("Sending chunk %d/%d  logical_session=0x%08x  packet.id=0x%08x  to=0x%08x",
+        seq, total, logical_session_id, packet.id, packet.to);
 
     g_mutex_lock(&mp->write_mutex);
     ssize_t written = write(mp->serial_fd, frame_buf, frame_len);

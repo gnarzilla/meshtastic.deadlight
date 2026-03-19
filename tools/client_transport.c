@@ -372,15 +372,17 @@ static void handle_incoming_frame(ClientTransport *ct,
         case meshtastic_FromRadio_packet_tag: {
             meshtastic_MeshPacket *pkt = &from_radio.payload_variant.packet;
             
-            g_debug("client: incoming packet from=%08x to=%08x id=%08x portnum=%d decoded=%d",
-                    pkt->from, pkt->to, pkt->id,
-                    (int)pkt->payload_variant.decoded.portnum,
-                    pkt->which_payload_variant == meshtastic_MeshPacket_decoded_tag);
-
             if (pkt->which_payload_variant != meshtastic_MeshPacket_decoded_tag)
                 break; /* encrypted — can't handle */
 
             int portnum = (int)pkt->payload_variant.decoded.portnum;
+
+            /* decoded payload length (set by nanopb callback) */
+            size_t payload_len = decode_ctx.len;
+
+            g_debug("Received packet_tag from=0x%08x to=0x%08x id=0x%08x port=%d len=%zu",
+                    pkt->from, pkt->to, pkt->id, portnum, payload_len);
+
             if (portnum != (int)ct->custom_port)
                 break;
 
