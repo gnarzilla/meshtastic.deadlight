@@ -35,7 +35,7 @@ This makes deadmesh an exit ramp from the carrier model, not just a resilience t
 
 ## Why This Exists
 
-Meshtastic networks are incredible for messaging and telemetry, but they weren't designed for general Internet access. Each protocol would need custom mesh-aware implementations — a chicken-and-egg problem where applications won't add mesh support without users, and users won't adopt mesh without applications.
+Meshtastic networks are incredible for messaging and telemetry, but they weren't designed for general Internet access. Each protocol would need custom mesh-aware implementations: a chicken-and-egg problem where applications won't add mesh support without users, and users won't adopt mesh without applications.
 
 deadmesh sits in the middle:
 1. **Mesh side**: Speaks fluent Meshtastic (protobuf over LoRa serial with proper API handshake)
@@ -63,7 +63,7 @@ The key architectural insight is treating LoRa as a **dumb byte pipe** and putti
 - **Transparent TLS Interception**: Inspect and cache HTTPS traffic with HTTP/1.1 ALPN negotiation to minimize mesh bandwidth
 - **Intelligent Fragmentation**: Automatically chunks large requests/responses into ~220-byte Meshtastic packets with unique per-chunk packet IDs — bypasses Meshtastic firmware's (from, id) deduplication that would silently drop all but the first chunk of multi-packet sessions
 - **Serial API Handshake**: Proper `want_config` initialization, auto-discovers node ID, receives full mesh state on startup
-- **Robust Serial Framing**: 0x94/0xC3 length-prefix state machine with sync recovery — if magic bytes are lost mid-stream, re-synchronizes automatically. This is what makes multi-hour uptime boring in the right way
+- **Robust Serial Framing**: 0x94/0xC3 length-prefix state machine with sync recovery. If magic bytes are lost mid-stream, re-synchronizes automatically. This is what makes multi-hour uptime boring in the right way
 - **Live Mesh Visibility**: Decodes all Meshtastic packet types (text messages, positions, telemetry, node info, routing)
 - **Store-and-Forward**: Delay-tolerant networking handles intermittent mesh connectivity
 - **Connection Pooling**: Reuses upstream connections aggressively with TLS session reuse to reduce LoRa airtime cost
@@ -81,7 +81,7 @@ The feature that makes deadmesh actually *pleasant* to use on LoRa — and the f
 
 - Type `mesh://en.wikipedia.org` instead of `http://` to get a clean, ultra-compressed, text-only version (~98% smaller)
 - Clear, helpful denial messages when something is impossible (e.g. "YouTube would take 47 hours and 312% of your daily duty cycle" + instant alternatives)
-- Shared cache that gets smarter every day — the whole mesh becomes a living knowledge appliance
+- Shared cache that gets smarter every day. The whole mesh becomes a living knowledge appliance
 - Volunteers can "seed" gateways with USB sticks (the dead librarian society)
 
 ### The Knowledge Appliance & Mesh Librarians
