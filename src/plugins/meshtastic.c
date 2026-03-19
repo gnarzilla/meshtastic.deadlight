@@ -14,6 +14,10 @@
  *   - reader_thread uses blocking reads — no 100ms busy-poll
  *   - Session routing maps (src_node_id, session_id) -> connection
  *   - send_chunk uses nanopb, not a raw memcpy struct cast
+ *   - send_chunk uses unique packet.id per chunk (g_random_int) to defeat
+ *     Meshtastic firmware dedup on (from, id) — session identity is carried
+ *     in a logical_session_id field in the 12-byte chunk header instead
+ *   - Chunk header expanded to 12 bytes: logical_session_id(4)+seq(4)+total(4)
  *   - Reassembly uses the bitmap tracker in mesh_session — handles out-of-order
  *   - on_connection_close frees session state cleanly
  *   - Serial open moved to a dedicated helper with proper baud rate config
@@ -963,24 +967,28 @@ static void handle_incoming_frame(MeshtasticPlugin *mp,
     const pb_byte_t *raw     = decoded_payload.buf;
     size_t           raw_len = decoded_payload.len;
 
-    if (raw_len < 8) {
+    if (raw_len < 12) {
         g_warning("Meshtastic: packet from %08x too short (%zu bytes)",
                    src_node, raw_len);
         return;
     }
 
+    uint32_t logical_session_id = 0;
     uint32_t seq_num      = 0;
     uint32_t total_chunks = 0;
-    memcpy(&seq_num,      raw,     4);
-    memcpy(&total_chunks, raw + 4, 4);
+    memcpy(&logical_session_id, raw,     4);
+    memcpy(&seq_num,            raw + 4, 4);
+    memcpy(&total_chunks,       raw + 8, 4);
 
-    const uint8_t *chunk_data = raw + 8;
-    size_t         chunk_len  = raw_len - 8;
+    const uint8_t *chunk_data = raw + 12;
+    size_t         chunk_len  = raw_len - 12;
 
-    uint32_t session_id = (seq_num == 0) ? packet_id : packet_id;
-
+    /* Key session on logical_session_id carried in the payload,
+     * NOT packet.id — the firmware deduplicates on (from, id) so
+     * every chunk gets a unique packet.id while sessions are
+     * identified by the 4-byte logical ID in the header.          */
     MeshSession *session = mesh_session_get_or_create(
-        mp->sessions, src_node, session_id);
+        mp->sessions, src_node, logical_session_id);
 
     if (seq_num == 0 || session->expected_chunks == 0) {
         mesh_session_init_reassembly(session, total_chunks);
@@ -992,24 +1000,24 @@ static void handle_incoming_frame(MeshtasticPlugin *mp,
         session, seq_num, chunk_data, chunk_len);
 
     g_debug("Meshtastic: chunk %u/%u from node %08x session %08x",
-            seq_num + 1, total_chunks, src_node, session_id);
+            seq_num + 1, total_chunks, src_node, logical_session_id);
 
     if (!complete) return;
     /* === Initiate proxy connection on first chunk of new session === */
     if (seq_num == 0 && session->conn == NULL) {
         g_info("Meshtastic: New proxy session from %08x session %08x — creating DeadlightConnection",
-            src_node, session_id);
+            src_node, logical_session_id);
 
         /* Create connection object — no real socket (mesh origin) */
         DeadlightConnection *new_conn = deadlight_connection_new(context, NULL, NULL);
         if (!new_conn) {
-            g_warning("Failed to create DeadlightConnection for mesh session %08x", session_id);
+            g_warning("Failed to create DeadlightConnection for mesh session %08x", logical_session_id);
             return;
         }
 
         /* Tag for mesh origin */
         new_conn->mesh_source_node = src_node;
-        new_conn->mesh_session_id  = session_id;
+        new_conn->mesh_session_id  = logical_session_id;
 
         g_debug("Created DeadlightConnection %lu for mesh (client_connection=%p)",
                 new_conn->id, new_conn->client_connection);
@@ -1017,7 +1025,7 @@ static void handle_incoming_frame(MeshtasticPlugin *mp,
         /* Create receive-only MeshStream */
         GIOStream *mesh_io = mesh_stream_new(session, dummy_mesh_send, NULL, 220);
         if (!mesh_io) {
-            g_warning("Failed to create MeshStream for session %08x", session_id);
+            g_warning("Failed to create MeshStream for session %08x", logical_session_id);
             deadlight_connection_free(new_conn);
             return;
         }
@@ -1040,7 +1048,7 @@ static void handle_incoming_frame(MeshtasticPlugin *mp,
         }
 
         g_info("Mesh proxy session %08x:%08x queued to worker pool (conn %lu)",
-            src_node, session_id, new_conn->id);
+            src_node, logical_session_id, new_conn->id);
 
         /* Push initial data if complete */
         if (complete && session->assembly_buf->len > 0) {
@@ -1064,7 +1072,7 @@ static void handle_incoming_frame(MeshtasticPlugin *mp,
     if (!session->conn) {
         g_info("Meshtastic: session %08x:%08x complete (%u bytes) "
                "— no connection assigned yet (mesh_stream pending)",
-               src_node, session_id,
+               src_node, logical_session_id,
                session->assembly_buf->len);
         return;
     }
@@ -1093,15 +1101,17 @@ static gboolean send_chunk(MeshtasticPlugin *mp,
         return FALSE;
     }
 
-    uint8_t chunk_buf[8 + MESH_FRAME_MAX_PAYLOAD];
-    if (len > MESH_FRAME_MAX_PAYLOAD - 8) {
+    uint8_t chunk_buf[12 + MESH_FRAME_MAX_PAYLOAD];
+    if (len > MESH_FRAME_MAX_PAYLOAD - 12) {
         g_warning("Meshtastic: chunk too large (%zu)", len);
         return FALSE;
     }
-    memcpy(chunk_buf,     &seq,   4);
-    memcpy(chunk_buf + 4, &total, 4);
-    memcpy(chunk_buf + 8, payload, len);
-    size_t chunk_total = 8 + len;
+    uint32_t logical_session_id = (uint32_t)conn->mesh_session_id;
+    memcpy(chunk_buf,      &logical_session_id, 4);
+    memcpy(chunk_buf + 4,  &seq,                4);
+    memcpy(chunk_buf + 8,  &total,              4);
+    memcpy(chunk_buf + 12, payload,             len);
+    size_t chunk_total = 12 + len;
 
     PbEncodeCtx payload_ctx = { chunk_buf, chunk_total };
     meshtastic_Data pb_data = meshtastic_Data_init_default;
@@ -1115,7 +1125,7 @@ static gboolean send_chunk(MeshtasticPlugin *mp,
     packet.from                  = mp->local_node_id;
     packet.to                    = conn->mesh_source_node;
     packet.channel               = 0;
-    packet.id                    = (uint32_t)conn->mesh_session_id;
+    packet.id                    = (uint32_t)g_random_int();
     packet.hop_limit             = 3;
 
     uint8_t packet_buf[600];
@@ -1153,10 +1163,6 @@ static gboolean send_chunk(MeshtasticPlugin *mp,
     g_mutex_lock(&mp->write_mutex);
     ssize_t written = write(mp->serial_fd, frame_buf, frame_len);
     g_mutex_unlock(&mp->write_mutex);
-
-    /* Pace transmissions — radio TX queue is small (firmware-dependent).
-    * ~500ms per packet is conservative but safe for MediumFast airtime. */
-    g_usleep(500 * 1000);  /* 500ms */
 
     if (written < 0 || (size_t)written != frame_len) {
         g_warning("Meshtastic: serial write failed: %s", g_strerror(errno));

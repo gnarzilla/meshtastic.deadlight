@@ -16,10 +16,11 @@
  *     Opens /dev/rfcomm0 (BT) or /dev/ttyACM0 (USB) directly.
  *
  * Wire protocol (same as gateway):
- *   Out: seq(4LE) + total(4LE) + payload → Data → MeshPacket
+ *   Out: logical_session_id(4LE) + seq(4LE) + total(4LE) + payload
+ *        → Data → MeshPacket (unique packet.id per chunk)
  *        → ToRadio → 0x94 0xC3 framing → radio fd
  *   In:  0x94 0xC3 framing → FromRadio → portnum==custom_port
- *        → strip 8-byte header → push to MeshSession pipe
+ *        → strip 12-byte header → push to MeshSession pipe
  */
 
 #include "client_transport.h"
@@ -223,7 +224,8 @@ static gboolean send_want_config(ClientTransport *ct) {
  * Mirrors send_chunk() in meshtastic.c:
  *   - writes to radio_fd (TCP or serial)
  *   - uses gateway_node_id as packet.to
- *   - uses session_id as packet.id (gateway routes response back by this)
+ *   - uses unique packet.id per chunk to defeat firmware dedup
+ *     (session identity is in the 12-byte logical header, not packet.id)
  * ───────────────────────────────────────────────────────────── */
 
 int client_send_fn(const uint8_t *payload, size_t len,
@@ -236,16 +238,18 @@ int client_send_fn(const uint8_t *payload, size_t len,
         return 0;
     }
 
-    /* Build chunk: seq(4LE) + total(4LE) + payload */
-    uint8_t chunk_buf[8 + CLIENT_FRAGMENT_SIZE];
+    /* Build chunk: logical_session_id(4LE) + seq(4LE) + total(4LE) + payload */
+    uint8_t chunk_buf[12 + CLIENT_FRAGMENT_SIZE];
     if (len > CLIENT_FRAGMENT_SIZE) {
         g_warning("client: chunk too large (%zu)", len);
         return 0;
     }
-    memcpy(chunk_buf,     &seq,    4);
-    memcpy(chunk_buf + 4, &total,  4);
-    memcpy(chunk_buf + 8, payload, len);
-    size_t chunk_total = 8 + len;
+    uint32_t logical_session_id = ctx->session_id;
+    memcpy(chunk_buf,      &logical_session_id, 4);
+    memcpy(chunk_buf + 4,  &seq,                4);
+    memcpy(chunk_buf + 8,  &total,              4);
+    memcpy(chunk_buf + 12, payload,             len);
+    size_t chunk_total = 12 + len;
 
     /* Data sub-message — payload is a pb_callback_t, use encode callback */
     meshtastic_Data pb_data = meshtastic_Data_init_default;
@@ -264,7 +268,9 @@ int client_send_fn(const uint8_t *payload, size_t len,
     packet.payload_variant.decoded          = pb_data;
     packet.from                             = ctx->local_node_id;
     packet.to                               = ctx->gateway_node_id;
-    packet.id                               = ctx->session_id;
+    packet.id                               = (uint32_t)(g_get_monotonic_time()
+                                                ^ ((uint64_t)ctx->session_id << 16)
+                                                ^ seq);
     packet.hop_limit                        = 3;
 
     uint8_t packet_buf[600];
@@ -316,8 +322,9 @@ int client_send_fn(const uint8_t *payload, size_t len,
  *
  * Called by the reader thread for each decoded FromRadio frame.
  * We act on portnum==custom_port packets from the gateway.
- * Sessions are keyed by (gateway_node_id, packet.id) — the gateway
- * echoes the client's original session_id as packet.id in responses.
+ * Sessions are keyed by (gateway_node_id, logical_session_id) — the
+ * logical_session_id is carried in the first 4 bytes of the chunk payload,
+ * separate from packet.id which is unique per chunk to defeat firmware dedup.
  * ───────────────────────────────────────────────────────────── */
 
 static void handle_incoming_frame(ClientTransport *ct,
@@ -387,24 +394,24 @@ static void handle_incoming_frame(ClientTransport *ct,
             const uint8_t *raw     = payload_buf;
             size_t         raw_len = decode_ctx.len;
 
-            if (raw_len < 8) {
+            if (raw_len < 12) {
                 g_warning("client: response chunk too short (%zu bytes)", raw_len);
                 break;
             }
 
+            uint32_t logical_session_id = 0;
             uint32_t seq_num      = 0;
             uint32_t total_chunks = 0;
-            memcpy(&seq_num,      raw,     4);
-            memcpy(&total_chunks, raw + 4, 4);
+            memcpy(&logical_session_id, raw,     4);
+            memcpy(&seq_num,            raw + 4, 4);
+            memcpy(&total_chunks,       raw + 8, 4);
 
-            const uint8_t *chunk_data = raw + 8;
-            size_t         chunk_len  = raw_len - 8;
+            const uint8_t *chunk_data = raw + 12;
+            size_t         chunk_len  = raw_len - 12;
 
-            /* Session keyed by (gateway_node_id, packet.id) */
-            uint32_t session_id = pkt->id;
-
+            /* Key on logical_session_id from payload, not pkt->id */
             MeshSession *session = mesh_session_get_or_create(
-                ct->sessions, ct->gateway_node_id, session_id);
+                ct->sessions, ct->gateway_node_id, logical_session_id);
 
             if (seq_num == 0 || session->expected_chunks == 0)
                 mesh_session_init_reassembly(session, total_chunks);
@@ -414,7 +421,7 @@ static void handle_incoming_frame(ClientTransport *ct,
 
             ct->frames_recv++;
             g_debug("client: response chunk %u/%u session=%08x",
-                    seq_num + 1, total_chunks, session_id);
+                    seq_num + 1, total_chunks, logical_session_id);
 
             if (!complete)
                 break;
@@ -426,10 +433,10 @@ static void handle_incoming_frame(ClientTransport *ct,
                                       session->assembly_buf->data,
                                       session->assembly_buf->len);
                 g_info("client: response complete — pushed %u bytes session=%08x",
-                       session->assembly_buf->len, session_id);
+                       session->assembly_buf->len, logical_session_id);
             } else {
                 g_warning("client: session %08x complete but no MeshStream "
-                          "assigned", session_id);
+                          "assigned", logical_session_id);
             }
 
             mesh_session_init_reassembly(session, 0);
