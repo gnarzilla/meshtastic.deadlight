@@ -105,7 +105,7 @@ static int dummy_mesh_send(const uint8_t *payload, size_t len,
                            gpointer user_data) {
     (void)payload; (void)seq; (void)total; (void)user_data;  /* silence warnings */
     g_debug("Dummy mesh send called on gateway receive stream (ignoring %zu bytes)", len);
-    return 0;  /* report success */
+    return 1;  /* report success */
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -957,7 +957,6 @@ static void handle_incoming_frame(MeshtasticPlugin *mp,
         return;
 
     uint32_t src_node  = pkt->from;
-    uint32_t packet_id = pkt->id;
 
     if (src_node == 0) {
         g_warning("Meshtastic: received packet with zero src_node, discarding");
@@ -1124,7 +1123,7 @@ static gboolean send_chunk(MeshtasticPlugin *mp,
     packet.which_payload_variant = meshtastic_MeshPacket_decoded_tag;
     packet.payload_variant.decoded = pb_data;
     packet.from                  = mp->local_node_id;
-    packet.to                    = conn->mesh_source_node;
+    packet.to                    = 0xFFFFFFFF;
     packet.channel               = 0;
     packet.id                    = (uint32_t)g_random_int();
     packet.hop_limit             = 3;
@@ -1167,6 +1166,8 @@ static gboolean send_chunk(MeshtasticPlugin *mp,
     g_mutex_lock(&mp->write_mutex);
     ssize_t written = write(mp->serial_fd, frame_buf, frame_len);
     g_mutex_unlock(&mp->write_mutex);
+
+    packet.want_ack = true;
 
     if (written < 0 || (size_t)written != frame_len) {
         g_warning("Meshtastic: serial write failed: %s", g_strerror(errno));

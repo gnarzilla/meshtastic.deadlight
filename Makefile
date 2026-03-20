@@ -1,272 +1,206 @@
-# deadmesh v1.0.0
-# Build system for the modular proxy server
+#=============================================================================
+# Project
+#=============================================================================
+PROJECT := deadmesh
+VERSION := 1.0.0
 
 #=============================================================================
-# Project Configuration
+# Compiler + Flags (single source of truth)
 #=============================================================================
-PROJECT = deadmesh
-VERSION = 1.0.0
-PREFIX = /usr/local
+CC := gcc
 
-#=============================================================================
-# Compiler Configuration
-#=============================================================================
-CC = gcc
-CFLAGS = -std=gnu11 -Wall -Wextra -pedantic -O2 -g
-LDFLAGS = -Wl,--as-needed
-LIBS = -lssl -lcrypto -lpthread
+COMMON_CFLAGS := -std=gnu11 -Wall -Wextra -pedantic -O2 -g
+INCLUDES      := -Isrc -Isrc/core -Isrc/mesh
 
-# Package config for GLib/GIO
-GLIB_CFLAGS = $(shell pkg-config --cflags glib-2.0 gio-2.0 gio-unix-2.0 json-glib-1.0 gmodule-2.0)
-GLIB_LIBS = $(shell pkg-config --libs glib-2.0 gio-2.0 gio-unix-2.0 json-glib-1.0 gmodule-2.0)
+PKG_CFLAGS := $(shell pkg-config --cflags glib-2.0 gio-2.0 gio-unix-2.0 json-glib-1.0 gmodule-2.0)
+PKG_LIBS   := $(shell pkg-config --libs   glib-2.0 gio-2.0 gio-unix-2.0 json-glib-1.0 gmodule-2.0)
 
-# Combined flags
-ALL_CFLAGS = $(CFLAGS) $(GLIB_CFLAGS) -DDEADLIGHT_VERSION=\"$(VERSION)\" -Isrc
-ALL_LIBS = $(LIBS) $(GLIB_LIBS)
+CFLAGS  := $(COMMON_CFLAGS) $(INCLUDES) $(PKG_CFLAGS) -DDEADLIGHT_VERSION=\"$(VERSION)\"
+LDFLAGS := -Wl,--as-needed
+LIBS    := -lssl -lcrypto -lpthread $(PKG_LIBS)
 
 #=============================================================================
-# Directory Structure
+# Feature Flags
 #=============================================================================
-OBJDIR = obj
-PLUGINDIR = src/plugins
-TESTDIR = src/tests
-BINDIR = bin
-PLUGIN_BINDIR = $(BINDIR)/plugins
-TOOLSDIR = tools
-
-# IMPORTANT: Added src/plugins to VPATH so make finds ratelimiter.c
-VPATH = src/core:src/protocols:src/plugins:src/ui:src/vpn:src/mesh
-
-# Installation directories
-LIBDIR = $(PREFIX)/lib
-CONFDIR = /etc/deadmesh
-LOGDIR = /var/log/deadmesh
-CACHEDIR = /var/cache/deadmesh
-
-#=============================================================================
-# Source Files
-#=============================================================================
-CORE_SOURCES = main.c config.c context.c logging.c network.c ssl.c \
-               protocols.c protocol_detection.c plugins.c request.c \
-               utils.c ssl_tunnel.c connection_pool.c
-
-PROTOCOL_SOURCES = http.c imap.c imaps.c socks.c smtp.c websocket.c ftp.c api.c
-
-# NEW: Plugins that are statically linked because Core/API uses them directly
-STATIC_PLUGIN_SOURCES = ratelimiter.c
-
-# Mesh transport layer — statically linked into the binary AND
-# compiled into meshtastic.so (each gets its own compilation unit)
-MESH_SOURCES = mesh_framing.c mesh_session.c mesh_stream.c
-
-VPN_SOURCES = vpn_gateway.c
-
-# Combine all sources into one list
-ALL_SOURCES = $(CORE_SOURCES) $(PROTOCOL_SOURCES) $(STATIC_PLUGIN_SOURCES) $(MESH_SOURCES) $(VPN_SOURCES)
-
-# ==== UI configuration ====
 UI ?= 0
+
+#=============================================================================
+# Directories
+#=============================================================================
+OBJDIR        := obj
+BINDIR        := bin
+TOOLSDIR      := tools
+PLUGIN_BINDIR := $(BINDIR)/plugins
+
+#=============================================================================
+# Sources
+#=============================================================================
+CORE_SRC   := $(wildcard src/core/*.c)
+PROTO_SRC  := $(wildcard src/protocols/*.c)
+MESH_SRC   := $(wildcard src/mesh/*.c)
+VPN_SRC    := $(wildcard src/vpn/*.c)
+PLUGIN_SRC := src/plugins/ratelimiter.c
+
+ALL_SRC := $(CORE_SRC) $(PROTO_SRC) $(MESH_SRC) $(VPN_SRC) $(PLUGIN_SRC)
+
 ifeq ($(UI),1)
-  ALL_CFLAGS += -DENABLE_UI
-  ALL_LIBS += $(shell pkg-config --libs libmicrohttpd)
-  ALL_SOURCES += ui.c assets.c
+  CFLAGS  += -DENABLE_UI
+  LIBS    += $(shell pkg-config --libs libmicrohttpd)
+  # Explicit list — assets.c is generated so wildcard won't see it at parse time
+  ALL_SRC += src/ui/ui.c src/ui/assets.c
 endif
 
-#=============================================================================
-# Object Files
-#=============================================================================
-
-ALL_OBJECTS = $(addprefix $(OBJDIR)/, $(ALL_SOURCES:.c=.o))
+OBJ := $(patsubst %.c,$(OBJDIR)/%.o,$(ALL_SRC))
 
 #=============================================================================
-# Targets
+# Nanopb / Meshtastic protobufs
 #=============================================================================
-MAIN_TARGET = $(BINDIR)/$(PROJECT)
-PLUGIN_TARGETS = $(PLUGIN_BINDIR)/adblocker.so \
-                 $(PLUGIN_BINDIR)/ratelimiter.so \
-                 $(PLUGIN_BINDIR)/meshtastic.so
+NANOPB_DIR := src/plugins/nanopb
+NANOPB_INC := src/plugins/include/nanopb
+PROTO_BASE := src/plugins/protobufs
+PROTO_DIR  := $(PROTO_BASE)/meshtastic
+GEN_DIR    := src/plugins/meshtastic
+
+NANOPB_SRC := $(NANOPB_DIR)/pb_common.c \
+              $(NANOPB_DIR)/pb_encode.c \
+              $(NANOPB_DIR)/pb_decode.c
+
+NANOPB_CFLAGS := -I$(NANOPB_INC) \
+                 -I$(GEN_DIR) \
+                 -I$(GEN_DIR)/meshtastic \
+                 -Isrc -Isrc/core -Isrc/mesh \
+                 -Wno-pedantic
+
+PROTO_FILES := $(filter-out $(PROTO_DIR)/deviceonly.proto,$(wildcard $(PROTO_DIR)/*.proto))
+PROTO_PB_C  := $(patsubst $(PROTO_DIR)/%.proto,$(GEN_DIR)/meshtastic/%.pb.c,$(PROTO_FILES))
+PROTO_PB_H  := $(patsubst $(PROTO_DIR)/%.proto,$(GEN_DIR)/meshtastic/%.pb.h,$(PROTO_FILES))
 
 #=============================================================================
-# Build Rules
+# Top-level Targets
 #=============================================================================
+MAIN    := $(BINDIR)/$(PROJECT)
+SIM     := $(TOOLSDIR)/mesh-sim
+CLIENT  := $(BINDIR)/deadmesh-client
+PLUGINS := $(PLUGIN_BINDIR)/adblocker.so \
+           $(PLUGIN_BINDIR)/ratelimiter.so \
+           $(PLUGIN_BINDIR)/meshtastic.so
 
-# Default target
-all: dirs $(MAIN_TARGET) plugins sim client
+all: dirs $(MAIN) plugins sim client
 
-# Create necessary directories
 dirs:
 	@mkdir -p $(OBJDIR) $(BINDIR) $(PLUGIN_BINDIR) $(TOOLSDIR)
 
-# Main executable
-$(MAIN_TARGET): $(ALL_OBJECTS)
-	@echo "Linking $(PROJECT)..."
-	@$(CC) $(LDFLAGS) -o $@ $^ $(ALL_LIBS)
-	@echo "Built $(PROJECT) v$(VERSION)"
-
-# Generic rule for .o files
-# Uses VPATH to find .c files in subdirectories
+#=============================================================================
+# Generic compile rule
+#=============================================================================
 $(OBJDIR)/%.o: %.c
 	@echo "Compiling $<..."
 	@mkdir -p $(dir $@)
-	@$(CC) $(ALL_CFLAGS) -c $< -o $@
+	@$(CC) $(CFLAGS) -c $< -o $@
 
-# ── UI Assets Generation ────────────────────────────────────────────────────
+#=============================================================================
+# UI asset generation
+# assets.c doesn't exist until this runs, so it can't be caught by wildcard.
+# The generic .o rule handles compilation once the .c exists.
+#=============================================================================
 ifeq ($(UI),1)
-
-UI_ASSETS = \
-	src/ui/index.html \
-	src/ui/favicon.ico \
-	src/ui/favicon.png
+UI_ASSETS := src/ui/index.html src/ui/favicon.ico src/ui/favicon.png
 
 src/ui/assets.c: $(UI_ASSETS)
 	@echo "Generating UI assets..."
-	@echo "/* Auto-generated UI assets */" > $@
-	@echo "" >> $@
+	@printf '/* Auto-generated UI assets */\n\n' > $@
 	@for asset in $(UI_ASSETS); do \
 		echo "Embedding $$asset..."; \
 		xxd -i $$asset >> $@; \
-		echo "" >> $@; \
+		printf '\n' >> $@; \
 	done
 
-$(OBJDIR)/assets.o: src/ui/assets.c
-
+# Force assets.o to depend on the generated .c explicitly
+$(OBJDIR)/src/ui/assets.o: src/ui/assets.c
 endif
 
-# Plugin builds
-plugins: $(PLUGIN_TARGETS)
+#=============================================================================
+# Main binary
+#=============================================================================
+$(MAIN): $(OBJ)
+	@echo "Linking $(PROJECT)..."
+	@$(CC) -o $@ $^ $(LDFLAGS) $(LIBS)
+	@echo "Built $(PROJECT) v$(VERSION)"
 
-$(PLUGIN_BINDIR)/adblocker.so: $(PLUGINDIR)/adblocker.c $(PLUGINDIR)/adblocker.h | $(PLUGIN_BINDIR)
+#=============================================================================
+# Plugins
+#=============================================================================
+PLUGIN_CFLAGS := $(CFLAGS) -fPIC
+
+plugins: $(PLUGINS)
+
+$(PLUGIN_BINDIR)/adblocker.so: src/plugins/adblocker.c src/plugins/adblocker.h
 	@echo "Building AdBlocker plugin..."
-	@$(CC) $(CFLAGS) $(GLIB_CFLAGS) -DDEADLIGHT_VERSION=\"$(VERSION)\" -Isrc -Isrc/core -fPIC -shared -o $@ $< $(ALL_LIBS)
+	@$(CC) $(PLUGIN_CFLAGS) -shared -o $@ $< $(LIBS)
 
-$(PLUGIN_BINDIR)/ratelimiter.so: $(PLUGINDIR)/ratelimiter.c $(PLUGINDIR)/ratelimiter.h | $(PLUGIN_BINDIR)
-	@echo "Building RateLimiter plugin (Shared)..."
-	@$(CC) $(CFLAGS) $(GLIB_CFLAGS) -DDEADLIGHT_VERSION=\"$(VERSION)\" -Isrc -Isrc/core -fPIC -shared -o $@ $< $(ALL_LIBS)
+$(PLUGIN_BINDIR)/ratelimiter.so: src/plugins/ratelimiter.c src/plugins/ratelimiter.h
+	@echo "Building RateLimiter plugin..."
+	@$(CC) $(PLUGIN_CFLAGS) -shared -o $@ $< $(LIBS)
 
-# ───────────────────────────────────────────────────────────
-# Meshtastic Plugin + Nanopb
-# ───────────────────────────────────────────────────────────
-
-NANOPB_DIR      = src/plugins/nanopb
-NANOPB_INC      = src/plugins/include/nanopb
-PROTO_BASE_DIR  = src/plugins/protobufs
-PROTO_DIR       = $(PROTO_BASE_DIR)/meshtastic
-GEN_DIR         = src/plugins/meshtastic
-
-NANOPB_SOURCES  = $(NANOPB_DIR)/pb_common.c \
-                  $(NANOPB_DIR)/pb_encode.c \
-                  $(NANOPB_DIR)/pb_decode.c
-
-NANOPB_CFLAGS   = -I$(NANOPB_INC) \
-                  -I$(GEN_DIR) \
-                  -I$(GEN_DIR)/meshtastic \
-                  -Isrc \
-                  -Isrc/core \
-                  -Isrc/mesh \
-                  -Wno-pedantic
-
-PROTO_FILES = $(filter-out $(PROTO_DIR)/deviceonly.proto,$(wildcard $(PROTO_DIR)/*.proto))
-MESHTASTIC_PB_C = $(patsubst $(PROTO_DIR)/%.proto,$(GEN_DIR)/meshtastic/%.pb.c,$(PROTO_FILES))
-MESHTASTIC_PB_H = $(patsubst $(PROTO_DIR)/%.proto,$(GEN_DIR)/meshtastic/%.pb.h,$(PROTO_FILES))
-
-$(GEN_DIR) $(GEN_DIR)/meshtastic:
-	@mkdir -p $(GEN_DIR)/meshtastic
+$(GEN_DIR)/meshtastic:
+	@mkdir -p $@
 
 $(GEN_DIR)/meshtastic/%.pb.c $(GEN_DIR)/meshtastic/%.pb.h: $(PROTO_DIR)/%.proto | $(GEN_DIR)/meshtastic
-	@echo "Generating nanopb files from $< ..."
+	@echo "Generating nanopb: $(notdir $<)..."
 	@PROTO_NAME=$$(basename $< .proto); \
 	protoc \
 		--plugin=protoc-gen-nanopb=$(NANOPB_DIR)/generator/protoc-gen-nanopb \
-		--proto_path=$(PROTO_BASE_DIR) \
+		--proto_path=$(PROTO_BASE) \
 		--nanopb_out=$(GEN_DIR) \
 		meshtastic/$$PROTO_NAME.proto
 
-$(MESHTASTIC_PB_C) $(MESHTASTIC_PB_H): $(PROTO_FILES)
-
-MESH_SRC_FILES  = src/mesh/mesh_framing.c \
-                  src/mesh/mesh_session.c \
-                  src/mesh/mesh_stream.c
-
 $(PLUGIN_BINDIR)/meshtastic.so: \
-		$(PLUGINDIR)/meshtastic.c \
-		$(PLUGINDIR)/meshtastic.h \
-		$(MESH_SRC_FILES) \
-		$(MESHTASTIC_PB_C) \
-		$(NANOPB_SOURCES) \
-		| $(PLUGIN_BINDIR)
-	@echo "Building MeshtasticTunnel plugin..."
-	@$(CC) $(ALL_CFLAGS) $(NANOPB_CFLAGS) -fPIC -shared -o $@ \
-		$(PLUGINDIR)/meshtastic.c $(MESH_SRC_FILES) $(MESHTASTIC_PB_C) $(NANOPB_SOURCES) $(ALL_LIBS)
+		src/plugins/meshtastic.c \
+		src/plugins/meshtastic.h \
+		$(MESH_SRC) \
+		$(PROTO_PB_C) \
+		$(NANOPB_SRC)
+	@echo "Building Meshtastic plugin..."
+	@$(CC) $(PLUGIN_CFLAGS) $(NANOPB_CFLAGS) -shared -o $@ \
+		src/plugins/meshtastic.c $(MESH_SRC) $(PROTO_PB_C) $(NANOPB_SRC) \
+		$(LIBS)
 
-PLUGIN_TARGETS += $(PLUGIN_BINDIR)/meshtastic.so
+#=============================================================================
+# Tools
+#=============================================================================
+sim: dirs $(SIM)
 
-# ── Mesh Simulator ──────────────────────────────────────────────────────────
-# Standalone binary — no GLib dependency, just pthreads + pty
-# Usage: ./tools/mesh-sim [--loss N] [--delay MS] [--hops N]
-
-SIM_TARGET = $(TOOLSDIR)/mesh-sim
-
-sim: dirs $(SIM_TARGET)
-
-$(SIM_TARGET): tools/mesh-sim.c src/mesh/mesh_framing.c src/mesh/mesh_framing.h
+# Uses $(CFLAGS) — this is the fix; old Makefile hardcoded flags and omitted PKG_CFLAGS
+$(SIM): tools/mesh-sim.c $(MESH_SRC)
 	@echo "Building mesh simulator..."
-	@$(CC) -std=gnu11 -Wall -Wextra -O2 -g \
-		-Isrc/mesh \
-		-o $@ \
-		tools/mesh-sim.c src/mesh/mesh_framing.c \
-		-lpthread -lutil
+	@$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(LIBS)
 	@echo "Simulator built: $@"
-	@echo "  Run: ./$@ [--loss N] [--delay MS]"
 
-# ── deadmesh-client ─────────────────────────────────────────────────────────
-CLIENT_TARGET = $(BINDIR)/deadmesh-client
+client: dirs $(CLIENT)
 
-client: dirs $(CLIENT_TARGET)
-
-$(CLIENT_TARGET): \
+$(CLIENT): \
 		tools/client_main.c \
 		tools/client_transport.c \
-		src/mesh/mesh_framing.c \
-		src/mesh/mesh_session.c \
-		src/mesh/mesh_stream.c \
-		$(NANOPB_SOURCES) \
-		$(MESHTASTIC_PB_C) \
-		| $(BINDIR)
-	@echo "Building deadmesh-client (with serial support)..."
-	@$(CC) $(ALL_CFLAGS) $(NANOPB_CFLAGS) \
-		-DCLIENT_TRANSPORT_SERIAL \
+		$(MESH_SRC) \
+		$(NANOPB_SRC) \
+		$(PROTO_PB_C)
+	@echo "Building deadmesh-client..."
+	@$(CC) $(CFLAGS) $(NANOPB_CFLAGS) -DCLIENT_TRANSPORT_SERIAL \
 		-o $@ \
-		tools/client_main.c \
-		tools/client_transport.c \
-		src/mesh/mesh_framing.c \
-		src/mesh/mesh_session.c \
-		src/mesh/mesh_stream.c \
-		$(NANOPB_SOURCES) \
-		$(MESHTASTIC_PB_C) \
-		$(ALL_LIBS)
+		tools/client_main.c tools/client_transport.c \
+		$(MESH_SRC) $(NANOPB_SRC) $(PROTO_PB_C) \
+		$(LDFLAGS) $(LIBS)
 	@echo "Client built: $@"
-	@echo "  Run: ./$@ --gateway <node_id>"
 
 #=============================================================================
-# Utility Targets
+# Clean
 #=============================================================================
-
 clean:
-	@echo "Cleaning build files..."
-	@rm -rf $(OBJDIR) $(BINDIR)
-	@rm -f $(SIM_TARGET)
-	@rm -f $(CLIENT_TARGET)
+	@echo "Cleaning..."
+	@rm -rf $(OBJDIR) $(BINDIR) $(SIM)
 	@rm -f src/ui/assets.c
-	@rm -f $(GEN_DIR)/*.pb.c $(GEN_DIR)/*.pb.h
+	@rm -f $(PROTO_PB_C) $(PROTO_PB_H)
 	@rm -rf $(GEN_DIR)
 	@echo "Clean complete"
 
-run: $(MAIN_TARGET)
-	@echo "Running $(PROJECT)..."
-	@./$(MAIN_TARGET) -v
-
-run-vpn: $(MAIN_TARGET)
-	@echo "Running $(PROJECT) with VPN gateway (requires root)..."
-	@sudo ./$(MAIN_TARGET) -v
-
-.PHONY: all dirs clean run run-vpn plugins sim client
+.PHONY: all clean dirs plugins sim client

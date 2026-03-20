@@ -7,6 +7,11 @@
 #include <string.h>
 #include <errno.h>
 #include <unistd.h>
+#include <time.h>
+#include <sys/select.h>     // select(), fd_set, FD_ZERO, FD_SET
+#include <inttypes.h>       // PRIu64
+#include <glib.h>           // g_warning, g_debug
+#include <termios.h>        // tcflush(), TCIFLUSH
 
 /* ─────────────────────────────────────────────────────────────
  * Reader
@@ -145,25 +150,48 @@ size_t mesh_frame_encode(const uint8_t *payload, uint16_t payload_len,
 
 bool mesh_frame_read_blocking(int fd, MeshFrameReader *reader, MeshFrame *out) {
     uint8_t buf[256];
+    time_t start = time(NULL);
 
     while (reader->state != MESH_FRAME_STATE_READY) {
-        ssize_t n = read(fd, buf, sizeof(buf));
+        struct timeval tv = { .tv_sec = 5, .tv_usec = 0 };  // 5 second timeout
 
-        if (n == 0) {
-            /* EOF */
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(fd, &rfds);
+
+        int r = select(fd + 1, &rfds, NULL, NULL, &tv);
+        if (r == 0) {
+            g_warning("mesh_frame_read_blocking: timeout after %ld s - state=%d, sync_errors=%" PRIu64,
+                      (long)(time(NULL) - start), reader->state, reader->sync_errors);
+            // Optional: aggressive resync on timeout
+            mesh_frame_reader_reset(reader);
+            tcflush(fd, TCIFLUSH);
+            continue;  // retry
+        }
+        if (r < 0) {
+            if (errno == EINTR) continue;
+            g_warning("select failed: %s", strerror(errno));
             return false;
         }
 
+        ssize_t n = read(fd, buf, sizeof(buf));
+        if (n == 0) {
+            g_warning("EOF on serial fd");
+            return false;
+        }
         if (n < 0) {
-            if (errno == EINTR) continue;   /* signal — retry */
-            return false;                   /* real error      */
+            if (errno == EINTR) continue;
+            g_warning("read failed: %s", strerror(errno));
+            return false;
         }
 
         size_t pos = 0;
         while (pos < (size_t)n) {
-            size_t consumed = mesh_frame_reader_push(reader, buf + pos,
-                                                      (size_t)n - pos);
+            size_t consumed = mesh_frame_reader_push(reader, buf + pos, (size_t)n - pos);
             pos += consumed;
+
+            g_debug("Pushed %zu bytes, new state=%d, pos=%u/%u",
+                    consumed, reader->state, reader->payload_pos, reader->payload_len);
 
             if (reader->state == MESH_FRAME_STATE_READY) {
                 break;
